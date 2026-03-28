@@ -11,6 +11,9 @@ using UnityEngine.EventSystems;
 using Debug = UnityEngine.Debug;
 using Unity.Burst;
 using Unity.Collections;
+using UnityEngine.SceneManagement;
+using System.Runtime.Remoting.Messaging;
+using Unity.VisualScripting;
 
 public enum DesktopEnvironments
 {
@@ -54,9 +57,18 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private void OnEnable()
     {
         Instance = this;
-        
+        #if !UNITY_EDITOR
         if (Enum.TryParse(Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP"), true, out _currentDesktopEnv))
+        {
+            switch(_currentDesktopEnv)
+            {
+                case DesktopEnvironments.Hyprland:
+                    _windowManagerImplementation = new HyprlandManager();
+                    break;
+            }
+            _windowManagerImplementation?.SetXUnityWindow(_unityWindow);
             return;
+        }
         if (!Enum.TryParse(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), true, out _currentSessionType))
         {
             _currentSessionType = SessionTypes.Unknown;
@@ -67,7 +79,12 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             SessionTypes.Wayland => DesktopEnvironments.OtherWayland,
             _ => DesktopEnvironments.Unknown
         };
+        #else
+            _currentDesktopEnv = DesktopEnvironments.Unknown;
+        #endif
     }
+
+    IWindowManagerImplementation _windowManagerImplementation = null;
 
     private Vector2 _lastPos;
 
@@ -77,13 +94,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             UpdateCursorState();
         if (_isDragging)
         {
-            if (_currentDesktopEnv == DesktopEnvironments.Hyprland){
-                var current = WaylandUtility.GetMousePositionHyprland();
-                if (current == _lastPos) return;
-                SetWindowPosition(current);
-                _lastPos = current;
-                return;
-            }
             var currentMousePos = GetMousePosition();
             var delta = currentMousePos - _initialMousePos;
             var newPos = _initialWindowPos + delta;
@@ -126,12 +136,16 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         _initialMousePos = GetMousePosition();
         _initialWindowPos = GetWindowPosition();
         _isDragging = true;
+        if (_windowManagerImplementation != null)
+            _windowManagerImplementation.IsDragging = true;
         UpdateCursorState();
     }
 
     public void OnPointerUp(PointerEventData eventData)
     {
         _isDragging = false;
+        if (_windowManagerImplementation != null)
+            _windowManagerImplementation.IsDragging = false;
         UpdateCursorState();
     }
 
@@ -391,6 +405,9 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         _running = false;
         _closing = true;
 
+        if(_windowManagerImplementation is IDisposable disposable)
+            disposable?.Dispose();
+
         if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero && _wakeupAtom != IntPtr.Zero)
         {
             XCompositeUnredirectWindow(_display, _unityWindow, CompositeRedirectAutomatic);
@@ -444,6 +461,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         
     public Vector2Int GetWindowPosition()
     {
+        if (_windowManagerImplementation != null)
+            return _windowManagerImplementation.GetWindowPosition();
         if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero)
         {
             // Use XTranslateCoordinates to get absolute position
@@ -472,8 +491,9 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         }
         if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero)
         {
-            if (_currentDesktopEnv == DesktopEnvironments.Hyprland){
-                WaylandUtility.SetWindowPositionHyprland(position);
+            if (_windowManagerImplementation != null)
+            {
+                _windowManagerImplementation.SetWindowPosition(position);
                 return;
             }
             if (_currentDesktopEnv == DesktopEnvironments.Kde && _currentSessionType == SessionTypes.Wayland)
@@ -548,6 +568,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     public void SetTransientFor(IntPtr parentWindow)
     {
         if (_display == IntPtr.Zero || _unityWindow == IntPtr.Zero || _closing) return;
+        if(_windowManagerImplementation != null)
+        {
+            _windowManagerImplementation.SetSnapedWindow(parentWindow);
+            return;
+        }
     
         XSetTransientForHint(_display, _unityWindow, parentWindow);
         XFlush(_display);
@@ -557,6 +582,13 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     {
         _monitors = new();
         _monitors.Clear();
+        if(_windowManagerImplementation != null)
+        {
+            foreach(var m in _windowManagerImplementation.GetAllMonitors())
+                _monitors[m.Id] = m.Rect;
+            return;
+        }
+
         if (_display == IntPtr.Zero) return;
             
         if (XRRQueryExtension(_display, out _, out _) == 0)
@@ -643,6 +675,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public Vector2 GetWindowSize(IntPtr window = default)
     {
+        if(_windowManagerImplementation != null)
+            return _windowManagerImplementation.GetWindowSize(window);
         if (window == IntPtr.Zero)
             window = _unityWindow;
         if (_display != IntPtr.Zero && window != IntPtr.Zero)
@@ -669,6 +703,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             SetWindowSizeLegacy(size);
             return;
         }
+        if (_windowManagerImplementation != null)
+            _windowManagerImplementation.SetWindowSize(size);
         if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero)
         {
             if (_netMoveResizeWindow == IntPtr.Zero)
@@ -705,6 +741,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public Vector2Int GetMousePosition()
     {
+        if (_windowManagerImplementation != null)
+            return _windowManagerImplementation.GetMousePosition();
         if (SaveLoadHandler.Instance.data.forceKWinApi && _currentDesktopEnv == DesktopEnvironments.Kde)
         {
             return Singleton<KWinManager>.Instance.GetCursorPos().Result;
@@ -839,6 +877,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public Vector2 GetTotalDisplaySize()
     {
+        if(_windowManagerImplementation != null)
+            return _windowManagerImplementation.GetTotalDisplaySize();
         XGetWindowAttributes(_display, _unityWindow, out var attr);
         return new Vector2(attr.width, attr.height);
     }
@@ -847,6 +887,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     private List<IntPtr> FindWindowsByPid(int targetPid)
     {
+        if(_windowManagerImplementation != null)
+            return _windowManagerImplementation.FindWindowsByPid(targetPid);
         var result = new List<IntPtr>();
 
         var windows = GetAllVisibleWindows();
@@ -876,6 +918,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public int GetWindowPid(IntPtr window)
     {
+        if(_windowManagerImplementation != null)
+            return _windowManagerImplementation.GetWindowPid(window);
         var pidAtom = XInternAtom(_display, "_NET_WM_PID", false);
 
         if (pidAtom == IntPtr.Zero)
@@ -904,6 +948,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     private List<IntPtr> GetAllVisibleWindows()
     {
+        if(_windowManagerImplementation != null)
+            return _windowManagerImplementation.GetAllVisibleWindows();
         if (_cachedVisibleWindows != null && !((DateTime.Now - _lastCacheTime).TotalSeconds > CacheRefreshSeconds))
             return _cachedVisibleWindows;
         var result = new List<IntPtr>();
@@ -980,6 +1026,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     public bool GetWindowRect(IntPtr window, out RectInt rect)
     {
         rect = new RectInt();
+        if(_windowManagerImplementation != null)
+            return _windowManagerImplementation.GetWindowRect(window, out rect);
         var result = XGetWindowAttributes(_display, window, out var attr);
         if (result == 0) return false;
 
@@ -995,6 +1043,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public void SetTopmost(bool topmost = true)
     {
+        if(_windowManagerImplementation != null)
+        {
+            _windowManagerImplementation.SetTopmost(topmost);
+            return;
+        }
 #if UNITY_EDITOR
         return;
 #endif
@@ -1031,6 +1084,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         
     public void HideFromTaskbar(bool reallyHide = true)
     {
+        if(_windowManagerImplementation != null)
+        {
+            _windowManagerImplementation.HideFromTaskbar(reallyHide);
+            return;
+        }
         if (_netWmState == IntPtr.Zero || _netWmStateSkipTaskbar == IntPtr.Zero)
             return;
 
@@ -1055,6 +1113,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     private void SetWindowBorderless()
     {
+        if(_windowManagerImplementation != null)
+        {
+            _windowManagerImplementation.SetWindowBorderless();
+            return;
+        }
         if (_display == IntPtr.Zero || _unityWindow == IntPtr.Zero) return;
 
         // Remove window decorations using Motif hints
@@ -1086,6 +1149,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public void SetWindowType(WindowType type)
     {
+        if(_windowManagerImplementation != null)
+        {
+            _windowManagerImplementation.SetWindowType(type);
+            return;
+        }
         switch (type)
         {
             case WindowType.Dock:
@@ -1102,6 +1170,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public string GetClassName(IntPtr window)
     {
+        if(_windowManagerImplementation != null)
+            return _windowManagerImplementation.GetClassName(window);
         if (XGetClassHint(_display, window, out var hint) != 0)
         {
             var cls = Marshal.PtrToStringAnsi(hint.res_class);
@@ -1113,7 +1183,12 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         return "";
     }
         
-    public bool IsDesktop(IntPtr hwnd) => GetWindowType(hwnd) == "_NET_WM_WINDOW_TYPE_DESKTOP";
+    public bool IsDesktop(IntPtr hwnd)
+    {
+        if(_windowManagerImplementation != null)
+            return _windowManagerImplementation.IsDesktop(hwnd);
+        return GetWindowType(hwnd) == "_NET_WM_WINDOW_TYPE_DESKTOP";
+    } 
 
     private IntPtr _desktop;
 
@@ -1134,7 +1209,12 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         }
     }
     
-    public bool IsDock(IntPtr hwnd) => GetWindowType(hwnd) == "_NET_WM_WINDOW_TYPE_DOCK";
+    public bool IsDock(IntPtr hwnd)
+    {
+        if(_windowManagerImplementation != null)
+            return _windowManagerImplementation.IsDock(hwnd);
+        return GetWindowType(hwnd) == "_NET_WM_WINDOW_TYPE_DOCK";
+    }
     
     private IntPtr _dock;
 
@@ -1157,6 +1237,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public bool IsWindowMaximized(IntPtr hwnd)
     {
+        if(_windowManagerImplementation != null)
+            return _windowManagerImplementation.IsWindowMaximized(hwnd);
         if (_netWmState == IntPtr.Zero) return false;
         var status = XGetWindowProperty(_display, hwnd, _netWmState, 0, 1024, false, (IntPtr)XaAtom, out _, out _, out var nItems, out _, out var prop);
         if (status != 0 || prop == IntPtr.Zero || nItems == 0) { if (prop != IntPtr.Zero) XFree(prop); return false; }
@@ -1173,6 +1255,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public bool IsWindowFullscreen(IntPtr hwnd)
     {
+        if(_windowManagerImplementation != null)
+            return _windowManagerImplementation.IsWindowFullscreen(hwnd);
         if (!GetWindowRect(hwnd, out var rect)) return false;
         int screenW = UnityEngine.Display.main.systemWidth, screenH = UnityEngine.Display.main.systemHeight;
         var tol = 2;
@@ -1195,6 +1279,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         
     public bool IsWindowVisible(IntPtr window)
     {
+        if(_windowManagerImplementation != null)
+            return _windowManagerImplementation.IsWindowVisible(window);
         if (_display == IntPtr.Zero) return false;
 
         var result = XGetWindowAttributes(_display, window, out var attr);
@@ -1279,6 +1365,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     
     public List<IntPtr> GetClientStackingList()
     {
+        if(_windowManagerImplementation != null)
+            return _windowManagerImplementation.GetClientStackingList();
         var atom = XInternAtom(_display, "_NET_CLIENT_LIST_STACKING", false);
         if (atom == IntPtr.Zero) return new List<IntPtr>();
 
