@@ -1,3 +1,4 @@
+#pragma warning disable 0162
 using Gtk;
 using UnityEngine;
 using UnityEngine.Localization;
@@ -75,6 +76,10 @@ public class LinuxSpecificSettings : MonoBehaviour
         showWindow = show;
         if (inEditor || SaveLoadHandler.Instance.safeMode)
         {
+            useLegacyMoveResizeCalls = SaveLoadHandler.Instance.data.useLegacyMoveResizeCalls;
+            enableAutoMemoryTrim = SaveLoadHandler.Instance.data.enableAutoMemoryTrim;
+            forceKWin = SaveLoadHandler.Instance.data.forceKWinApi;
+            windowType = SaveLoadHandler.Instance.data.windowType;
             background.SetActive(true);
             if (!show)
             {

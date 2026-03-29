@@ -13,6 +13,7 @@ using Unity.Burst;
 using Unity.Collections;
 using UnityEngine.SceneManagement;
 using System.Runtime.Remoting.Messaging;
+using System.Threading.Tasks;
 using Unity.VisualScripting;
 
 public enum DesktopEnvironments
@@ -57,7 +58,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private void OnEnable()
     {
         Instance = this;
-        #if !UNITY_EDITOR
         if (Enum.TryParse(Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP"), true, out _currentDesktopEnv))
         {
             switch(_currentDesktopEnv)
@@ -73,15 +73,13 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         {
             _currentSessionType = SessionTypes.Unknown;
         }
+
         _currentDesktopEnv = _currentSessionType switch
         {
             SessionTypes.X11 => DesktopEnvironments.OtherX11,
             SessionTypes.Wayland => DesktopEnvironments.OtherWayland,
             _ => DesktopEnvironments.Unknown
         };
-        #else
-            _currentDesktopEnv = DesktopEnvironments.Unknown;
-        #endif
     }
 
     IWindowManagerImplementation _windowManagerImplementation = null;
@@ -484,6 +482,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public void SetWindowPosition(Vector2Int position)
     {
+        if (_currentDesktopEnv == DesktopEnvironments.Kde && _currentSessionType == SessionTypes.Wayland)
+        {
+            Singleton<KWinManager>.Instance.MoveWindow(position);
+            return;
+        }
         if (SaveLoadHandler.Instance.data.useLegacyMoveResizeCalls)
         { 
             SetWindowPositionLegacy(position);
@@ -494,11 +497,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             if (_windowManagerImplementation != null)
             {
                 _windowManagerImplementation.SetWindowPosition(position);
-                return;
-            }
-            if (_currentDesktopEnv == DesktopEnvironments.Kde && _currentSessionType == SessionTypes.Wayland)
-            {
-                Singleton<KWinManager>.Instance.MoveWindow(position);
                 return;
             }
             if (_netMoveResizeWindow == IntPtr.Zero)
@@ -745,7 +743,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             return _windowManagerImplementation.GetMousePosition();
         if (SaveLoadHandler.Instance.data.forceKWinApi && _currentDesktopEnv == DesktopEnvironments.Kde)
         {
-            return Singleton<KWinManager>.Instance.GetCursorPos().Result;
+            return Task.Run(Singleton<KWinManager>.Instance.GetCursorPos).GetAwaiter().GetResult();
         }
         // Query mouse position
         int rootX = 0, rootY = 0;
@@ -909,7 +907,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     {
         if (_currentDesktopEnv == DesktopEnvironments.Kde)
         {
-            return Singleton<KWinManager>.Instance.GetWindowPid(kWinUuid).Result;
+            return Task.Run(() => Singleton<KWinManager>.Instance.GetWindowPid(kWinUuid)).GetAwaiter().GetResult();
         }
         
         ShowError("The argument is passed as a string which is supposed to be a UUID of a window managed by KWin.\nHowever KWin/KDE is not detected.");
@@ -1015,7 +1013,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     {
         if (_currentDesktopEnv == DesktopEnvironments.Kde)
         {
-            rect = Singleton<KWinManager>.Instance.GetWindowGeometry(kWinUuid).Result;
+            rect = Task.Run(() => Singleton<KWinManager>.Instance.GetWindowGeometry(kWinUuid)).GetAwaiter().GetResult();
             return;
         }
 
@@ -1357,7 +1355,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     {
         if (_currentDesktopEnv == DesktopEnvironments.Kde)
         {
-            return Singleton<KWinManager>.Instance.GetAllWindows().Result;
+            return Task.Run(Singleton<KWinManager>.Instance.GetAllWindows).GetAwaiter().GetResult();
         }
         ShowError("KWin/KDE is not detected.");
         return new List<string>();
