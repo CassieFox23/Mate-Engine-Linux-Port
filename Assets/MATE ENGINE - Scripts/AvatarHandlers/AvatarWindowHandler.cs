@@ -290,14 +290,26 @@ public class AvatarWindowHandler : MonoBehaviour
             // Check visibility directly via X11
             if (!handled && !WindowManager.Instance.IsWindowVisible(snappedHWND)) { ClearSnapAndHide(); }
         }
+        
+        if (snappedUUID != string.Empty)
+        {
+            // Validate snapped window existence
+            bool found = false;
+            for(int i=0; i<cachedWindows.Count; i++) { if(cachedWindows[i].uuid == snappedUUID) { found=true; break; }}
+            
+            if (!found) // Maximized / Fullscreen detection not implemented
+            { 
+                ClearSnapAndHide(); 
+            }
+        }
 
         if (controller.isDragging)
         {
-            if (snappedHWND == IntPtr.Zero || snappedUUID == string.Empty) { if (_canSitHold && DraggedPastSnapThreshold()) TrySnap(); }
+            if (!SaveLoadHandler.Instance.data.forceKWinApi & snappedHWND == IntPtr.Zero || SaveLoadHandler.Instance.data.forceKWinApi & snappedUUID == string.Empty) { if (_canSitHold && DraggedPastSnapThreshold()) TrySnap(); }
             else if (!IsStillNearSnappedWindow()) { SetGuardZoneFromCurrent(); ClearSnapAndHide(true); }
             else FollowSnapped(true);
         }
-        else if (!controller.isDragging && snappedHWND != IntPtr.Zero) FollowSnapped(false);
+        else if (!controller.isDragging && snappedHWND != IntPtr.Zero | snappedUUID != string.Empty) FollowSnapped(false);
         
         if (animator.GetBool("isBigScreenAlarm"))
         {
@@ -341,7 +353,6 @@ public class AvatarWindowHandler : MonoBehaviour
         {
             return WindowManager.Instance.GetWindowRect(hWnd, out rect);
         }
-        print($"What in the hell are you passing?");
         rect = RectInt.zero;
         return false;
     }
@@ -720,7 +731,7 @@ public class AvatarWindowHandler : MonoBehaviour
         if ((!useKWin && snappedHWND == IntPtr.Zero) || (useKWin && string.IsNullOrEmpty(snappedUUID)) || 
             !GetWindowRect(activeTarget, out RectInt r)) 
         { 
-            ClearSnapAndHide(); 
+            ClearSnapAndHide();
             return; 
         }
         RECT tr = RECT.FromRect(r);
@@ -784,20 +795,17 @@ public class AvatarWindowHandler : MonoBehaviour
         // Find if snapped window is still valid and in cached list
         bool found = false;
         WindowEntry win = default;
-        for(int i=0; i<cachedWindows.Count; i++) { if(cachedWindows[i].hwnd == snappedHWND || cachedWindows[i].uuid == snappedUUID) { win = cachedWindows[i]; found = true; break; } }
+        for(int i=0; i<cachedWindows.Count; i++) { if(cachedWindows[i].hwnd == snappedHWND) { win = cachedWindows[i]; found = true; break; } }
         if (!found) return false; // Window gone
 
         // Re-query rect to be safe or use cached? Better use cached from enum for consistency or query fresh if needed.
         // Let's query fresh for "StillNear" check to be responsive.
-        if (!SaveLoadHandler.Instance.data.forceKWinApi && WindowManager.Instance.GetWindowRect(snappedHWND, out RectInt r)) win.rect = RECT.FromRect(r);
-        if (SaveLoadHandler.Instance.data.forceKWinApi)
-        {
-            WindowManager.Instance.GetWindowRect(snappedUUID, out RectInt r1);
-            win.rect = RECT.FromRect(r1);
-        }
+        if (!SaveLoadHandler.Instance.data.forceKWinApi && GetWindowRect(snappedHWND, out RectInt r)) win.rect = RECT.FromRect(r);
+        else if (SaveLoadHandler.Instance.data.forceKWinApi && GetWindowRect(snappedUUID, out RectInt r1)) win.rect = RECT.FromRect(r1);
         else return false;
 
         if (!ComputeZoneDesktop(out float px, out float py)) return true;
+
         int left = win.rect.Left, right = win.rect.Right, top = win.rect.Top;
         
         bool hitHoriz = px >= left && px <= right;

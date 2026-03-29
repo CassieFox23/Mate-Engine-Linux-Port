@@ -1496,7 +1496,9 @@ MonoBehaviour:
       and running JavaScript scripts to communicate with the KDE window manager.\n\nBy
       enabling this option, you allow us to frequently rewrite and run a tiny script
       under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet.
-      \n\nNote that this feature only works in the KDE Plasma desktop environment."
+      \n\nNote that this feature is currently very buggy, and it only works in the
+      KDE Plasma desktop environment.\n\nUnless you have an urgent need for your
+      pet to sit on windows in Plasma Wayland, this option should not be enabled."
     m_Metadata:
       m_Items: []
   references:
