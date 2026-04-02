@@ -6,572 +6,686 @@ using System;
 using System.Collections.Generic;
 using UnityEditor;
 using System.Threading;
-using Unity.VisualScripting;
 using System.Runtime.CompilerServices;
 using System.Collections.Concurrent;
+using Random = System.Random;
+using Unity.VisualScripting;
 
+using static APIs.Hyprland.HyprlandUtils;
 
-public class HyprlandManager : IDisposable, IWindowManagerImplementation
+namespace APIs.Hyprland
 {
-    const int _UpdateDelay = 250;
-    const int _CloseDelay = 25;
-    const int _FocusableUpdateDelay = 5;
-
-    Vector2Int _LastCursorPosition = Vector2Int.zero;
-    bool _CursorOver = false;
-    bool _Focusable = false;
-    CancellationTokenSource _CancellationTokenSource;
-
-    ConcurrentDictionary<IntPtr, HyprlandClient> _Clients;
-
-    Vector2Int? _NewWindowPosition = null;
-    Vector2Int? _NewWindowSize = null;
-
-    bool _MouseOverWindow;
-
-    bool _IsDragging;
-
-    public bool IsDragging
+    public class HyprlandManager : IDisposable, IWindowManagerImplementation
     {
-        get => _IsDragging;
-        set
+        const int _LayerBackground = 0;
+        const int _LayerBottom = 1;
+        const int _LayerTop = 2;
+        const int _LayerOverlay = 3;
+
+        Vector2Int _LastCursorPosition = Vector2Int.zero;
+        bool _CursorOver = false;
+
+        Stopwatch _ImidiateStopWatch;
+        TimeSpan _ImidiateStopWatchRuntime = TimeSpan.FromSeconds(1);
+        CancellationTokenSource _CancellationTokenSource;
+
+        ConcurrentDictionary<IntPtr, HyprlandClient> _Clients;
+
+        bool _MouseOverWindow;
+
+        int _CurrentWorkspace = 0;
+
+        bool _IsDragging;
+
+        public bool IsDragging
         {
-            _IsDragging = value;
-            //ShowError(value.ToString());
-        }
-    }
-
-    HyprlandClient _Window = null;
-
-    public HyprlandManager() 
-    {
-        _Clients = new ConcurrentDictionary<IntPtr, HyprlandClient>();
-        _CancellationTokenSource = new CancellationTokenSource();
-        _LoopTask = Task.Run(async () => Update(_CancellationTokenSource.Token), _CancellationTokenSource.Token);
-    }
-
-    const string _Hyprctl = "/usr/bin/hyprctl";
-
-    static void SetProp(string windowAddress, string propName, params object[] propValue)
-    {
-        var args = new string[4 + propValue.Length];
-        args[0] = "dispatch";
-        args[1] = "setprop";
-        args[2] = $"address:{windowAddress}";
-        args[3] = propName;
-        for(int i = 4; i < propValue.Length + 4; i++)
-            args[i] = propValue[i - 4]?.ToString();
-        var result = RunCommand(_Hyprctl, args);
-        if(!CommandSuccessful(result))
-            ShowError($"{propName}: {result}");
-    }
-
-    static string GetProp(string windowAddress, string propName)
-    {
-        return RunCommand(_Hyprctl, "getprop", $"address:{windowAddress}", propName );
-    }
-
-    public void HideFromTaskbar(bool reallyHide)
-    {
-        // ShowError(reallyHide);
-    }
-
-    public void SetWindowBorderless()
-    {
-
-    }
-
-    static string IntPtrToHex(IntPtr ptr) => ptr.ToString("X8");
-
-    public void SetWindowType(WindowType type)
-    {
-    }
-
-    Task _LoopTask;
-
-    bool? _DefaultPinState;
-
-
-
-    void SetInitialWindowProps()
-    {
-        RunCommand(_Hyprctl, "dispatch", "setfloating", $"address:{_Window.address}");
-        //ShowError($"DefaultPinState: {_DefaultPinState}");
-        SetProp(_Window.address, "no_focus", true);
-        SetProp(_Window.address, "decorate", false);
-        SetProp(_Window.address, "no_blur", "on");
-        // SetProp(_Window.address, "opacity", 2, 2);
-        //SetProp(_Window.address, "border_size", 0);
-        // SetProp(_Window.address, "opaque", false);
-        // SetProp(_Window.address, "immediate", "on");
-
-        var data = SaveLoadHandler.Instance.data;
-        Vector2Int size = Vector2Int.zero;
-        switch (data.windowSizeState)
-        {
-            case SaveLoadHandler.SettingsData.WindowSizeState.Normal:
-                size = new Vector2Int(1536, 1024);
-                break;
-            case SaveLoadHandler.SettingsData.WindowSizeState.Big:
-                size = new Vector2Int(2048, 1536);
-                break;
-            case SaveLoadHandler.SettingsData.WindowSizeState.Small:
-                size = new Vector2Int(768, 512); 
-                break;
-        }
-        _NewWindowSize = size;
-    }
-
-    void SyncPinnedStateWithSnappedWindow()
-    {
-        if(_SnappedWindow != null)
-        {
-            if(_DefaultPinState == null)
-                _DefaultPinState = _Window.pinned;
-            if(_Clients.ContainsKey(_SnappedWindow.Value) && _Window.pinned != _Clients[_SnappedWindow.Value].pinned)
-                RunCommand(_Hyprctl, "dispatch", "pin", $"address:{_Window.address}");
-        }
-        else
-        {
-            if(_DefaultPinState.HasValue && _Window.pinned != _DefaultPinState.Value)
+            get => _IsDragging;
+            set
             {
-                RunCommand(_Hyprctl, "dispatch", "pin", $"address:{_Window.address}");
-                _DefaultPinState = null;
+                _IsDragging = value;
+                //ShowError(value.ToString());
             }
         }
-    }
 
-    async Task Update(CancellationToken cancellationToken)
-    {
-        var c = 0;
-        var d = 0;
-        while(!cancellationToken.IsCancellationRequested)
+        HyprlandClient _Window = null;
+
+        HyprlandEventReader _HyprlandEventReader;
+        HyprlandDispatcher _HyprlandDispatcher;
+        SemaphoreSlim _LoopLock = new SemaphoreSlim(1,1);
+
+        public HyprlandManager()
+        {
+            _ImidiateStopWatch = new Stopwatch();
+            var random = new Random();
+            _Clients = new ConcurrentDictionary<IntPtr, HyprlandClient>();
+            _Layers = new ConcurrentDictionary<IntPtr, HyprlandClient>();
+            _CancellationTokenSource = new CancellationTokenSource();
+            _LoopTask = Task.Run(async () => Update(_CancellationTokenSource.Token), _CancellationTokenSource.Token);
+
+            _HyprlandDispatcher = new HyprlandDispatcher();
+            _HyprlandDispatcher.Initialize();
+
+            _HyprlandEventReader = new HyprlandEventReader();
+            _HyprlandEventReader.HyprlandEvent += HyprlandEvent;
+            _HyprlandEventReader.Start(new List<string>
+        {
+            HyprlandEventNames.ActiveWindow,
+            HyprlandEventNames.ActiveWindowV2,
+            HyprlandEventNames.FocusMonitor,
+            HyprlandEventNames.FocusMonitorV2,
+            HyprlandEventNames.WindowTitle,
+            HyprlandEventNames.WindowTitleV2
+        });
+        }
+
+        async void HyprlandEvent(object sender, HyprlandEventArgs hyprlandEventArgs)
         {
             try
             {
-                if(_Window == null)
+                await _LoopLock.WaitAsync(_CancellationTokenSource.Token);
+                switch (hyprlandEventArgs.EventName)
                 {
-                    UpdateMonitors();
-                    UpdateWindows();
-                    if(_Window != null)
-                        SetInitialWindowProps();
-                }
-                else
-                {
-                    UpdateMousePosition();
-                    SetNewWindowSize();
-                    SetNewWindowPosition();
-                    if(c == 2)
-                    {
-                        UpdateWindows();
-                        UpdateFocusable();
-                        SyncPinnedStateWithSnappedWindow();
-                        c = 0;
-                    }
-                    if(d == 100)
-                    {
-                        UpdateMonitors();
-                        d = 0;
-                    }
+                    case HyprlandEventNames.MoveToWorkspace:
+                        {
+                            // update current workspace
+                            _CurrentWorkspace = int.Parse(hyprlandEventArgs.Parameters[0]);
+                            break;
+                        }
+                    case HyprlandEventNames.MoveWindowToWorkspace:
+                        {
+                            // check if the snapped window move to a different window and move the avatar window to the same workspace
+                            var movedWindow =  AddressToIntPtr(hyprlandEventArgs.Parameters[0]);
+                            var targetWorkspace = int.Parse(hyprlandEventArgs.Parameters[1]);
+                            if(movedWindow == _SnappedWindow && _Window.workspace.id != targetWorkspace)
+                                await _HyprlandDispatcher.MoveWindowToWorkspace(_Window.address, targetWorkspace, true);
+                            break;
+                        }
+                    case HyprlandEventNames.CreateWorkspace:
+                    case HyprlandEventNames.DestroyWorkspace:
+                    case HyprlandEventNames.MoveToWorkspaceToMonitor:
+                    case HyprlandEventNames.MoveWindowIntoGroup:
+                    case HyprlandEventNames.MoveWindowOutOfGroup:
+                    case HyprlandEventNames.CloseWindow:
+                    case HyprlandEventNames.OpenWindow:
+                        {
+                            // layout likely changed
+                            TriggerImidiateUpdates();
+                            break;
+                        }
+                    case HyprlandEventNames.PinState:
+                        {
+                            var ptr = AddressToIntPtr(hyprlandEventArgs.Parameters[0]);
+                            if (ptr == _SnappedWindow)
+                                await SetPinStateAsync();
+                            // ShowError(hyprlandEventArgs.EventName);
+                            break;
+                        }
+                    case HyprlandEventNames.MonitorAdded:
+                    case HyprlandEventNames.MonitorRemoved:
+                        {
+                            _Monitors = await _HyprlandDispatcher.GetMonitorsAsync();
+                            // ShowError(hyprlandEventArgs.EventName);
+                            break;
+                        }
+                    case HyprlandEventNames.LayerAdded:
+                    case HyprlandEventNames.LayerRemoved:
+                        {
+                            await UpdateLayersAsync();
+                            // ShowError(hyprlandEventArgs.EventName);
+                            break;
+                        }
                 }
             }
             catch(Exception ex)
             {
                 ShowError(ex.ToString());
             }
-            var delay = _UpdateDelay;
-            if(_MouseOverWindow)
-                delay = _CloseDelay;
-            if(_Focusable)
-                delay = _FocusableUpdateDelay;
-            await Task.Delay(delay);
-            //ShowError($"LoopDelay: {delay}");
-            c++;
-            d++;
-        }
-    }
-
-    static HyprlandClients GetHyprlandClients()
-    {
-        var output = RunCommand(_Hyprctl, "clients", "-j");
-        output = $"{{ \"clients\" : {output} }}";
-        return JsonUtility.FromJson<HyprlandClients>(output);
-    }
-
-    void UpdateMousePosition()
-    {
-        string output = RunCommand(_Hyprctl, "cursorpos");
-        _LastCursorPosition = HyprlandVectorToVector2Int(output);
-        // ShowError($"MousePos: {_LastCursorPosition}");
-    }
-
-    void UpdateWindows()
-    {
-        var clients = GetHyprlandClients();
-        if(_Window == null)
-            _Window = clients.clients.FirstOrDefault(a => a.pid == Process.GetCurrentProcess().Id);
-        else
-            _Window = clients.clients.FirstOrDefault(a => a.address == _Window.address);
-        if(_Window == null)
-            return;
-        
-
-        var closedWindows = _Clients.Where(existing => !clients.clients.Any(found => found.address == existing.Value.address)).Select(a => a.Key).ToList();
-        foreach(var closedWindow in closedWindows)
-            _Clients.TryRemove(closedWindow,out _);
-
-        foreach(var client in clients.clients)
-            _Clients[client.addressIntPtr] = client;
-
-        // foreach(var client in _Clients)
-        //     ShowError($"{client.Key}: {client.Value.address}, {client.Value.title}, {client.Value.atVector}, {client.Value.sizeVector}");
-    }
-
-    void SetNewWindowPosition()
-    {
-        if(_NewWindowPosition != null && _NewWindowPosition != _Window.atVector)
-        {
-            var output = RunCommand(_Hyprctl, $"dispatch movewindowpixel exact {_NewWindowPosition.Value.x} {_NewWindowPosition.Value.y} , address:{_Window.address}");
-            if(!CommandSuccessful(output))
-                ShowError(output);
-            _Window.at = new int[] { _NewWindowPosition.Value.x, _NewWindowPosition.Value.y };
-            _NewWindowPosition = null;
-        }
-    }
-
-    void SetNewWindowSize()
-    {
-        if(_NewWindowSize != null && _NewWindowSize != _Window.sizeVector)
-        {
-            var output = RunCommand(_Hyprctl,  $"dispatch resizewindowpixel exact {_NewWindowSize.Value.x} {_NewWindowSize.Value.y} , address:{_Window.address}");
-            if(!CommandSuccessful(output))
-                ShowError(output);
-            _Window.size = new int[] { _NewWindowSize.Value.x, _NewWindowSize.Value.y };
-            _NewWindowSize = null;
-        }
-    }
-
-
-    void UpdateFocusable()
-    {
-        var forceFocus = MenuActions.IsAnyMenuOpen() || IsDragging;
-        if(forceFocus)
-        {
-            SetFocusable(true);
-            _MouseOverWindow = true;
-        }
-        else
-        {
-            var windowRect = new Rect(_Window.atVector.x ,_Window.atVector.y,_Window.sizeVector.x, _Window.sizeVector.y);
-            _MouseOverWindow = windowRect.Contains(_LastCursorPosition);
-            if(_MouseOverWindow)
+            finally
             {
-                //ShowError($"Cursor: {_LastCursorPosition}");
-                var correction = SaveLoadHandler.Instance.data.avatarSize - 0.10F;
-                var avatarScale = SaveLoadHandler.Instance.data.avatarSize - (0.28F * correction);
-                var avatarHeight = _Window.sizeVector.y * avatarScale;
-                var avatarWidth = avatarHeight / 4.5625F;
-                var verticalOffset = _Window.sizeVector.y - avatarHeight;
-                var horizontalOffset = (_Window.sizeVector.x - avatarWidth) / 2;
-                
-                //ShowError($"windowRect: {windowRect}");
-                var avatarRect = new Rect(_Window.atVector.x + horizontalOffset,_Window.atVector.y + verticalOffset, _Window.sizeVector.x - horizontalOffset * 2, _Window.sizeVector.y - verticalOffset);
-                //ShowError($"avatarRect: {avatarRect}");
-                var cursorOver = avatarRect.Contains(_LastCursorPosition);
-                if(_CursorOver != cursorOver)
+                _LoopLock.Release();
+            }
+        }
+
+        public void HideFromTaskbar(bool reallyHide)
+        {
+            // not supported
+            // has to be configured in the bar/widget application
+        }
+
+        public void SetWindowBorderless()
+        {
+            // not necessary
+        }
+
+        public void SetWindowType(WindowType type)
+        {
+            // not supported
+        }
+
+        Task _LoopTask;
+
+        bool? _DefaultPinState;
+
+        async Task SetInitialWindowPropsAsync()
+        {
+            // turn the window into a floating window
+            await _HyprlandDispatcher.SetFloatingAsync(_Window.address);
+            // disable the focus by default
+            await _HyprlandDispatcher.SetPropAsync(_Window.address, "no_focus", true);
+            // remove all window decorations
+            await _HyprlandDispatcher.SetPropAsync(_Window.address, "decorate", false);
+            // disable the window background blur
+            await _HyprlandDispatcher.SetPropAsync(_Window.address, "no_blur", "on");
+
+            // set the initial window size
+            var data = SaveLoadHandler.Instance.data;
+            Vector2Int size = Vector2Int.zero;
+            switch (data.windowSizeState)
+            {
+                case SaveLoadHandler.SettingsData.WindowSizeState.Normal:
+                    size = new Vector2Int(1536, 1024);
+                    break;
+                case SaveLoadHandler.SettingsData.WindowSizeState.Big:
+                    size = new Vector2Int(2048, 1536);
+                    break;
+                case SaveLoadHandler.SettingsData.WindowSizeState.Small:
+                    size = new Vector2Int(768, 512);
+                    break;
+            }
+            if (size != Vector2Int.zero)
+                SetWindowSize(size);
+        }
+
+        void TriggerImidiateUpdates()
+        {
+            // inits high poling rates
+            _ImidiateStopWatch.Reset();
+            _ImidiateStopWatch.Start();
+        }
+
+        async Task Update(CancellationToken cancellationToken)
+        {
+            var c = 0;
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
                 {
-                    SetFocusable(cursorOver);
-                    _CursorOver = cursorOver;
+                    await _LoopLock.WaitAsync(cancellationToken);
+                    // check if the avatar window has been identified
+                    if (_Window == null)
+                    {
+                        // initial setup
+                        var workspace = await _HyprlandDispatcher.GetActiveWorkspace();
+                        _CurrentWorkspace = workspace.id;
+                        _Monitors = await _HyprlandDispatcher.GetMonitorsAsync();
+                        await UpdateLayersAsync();
+                        await UpdateWindowsAsync();
+                        if (_Window != null)
+                            await SetInitialWindowPropsAsync();
+                    }
+                    else
+                    {
+                        // update tracking variables
+                        if (c % 50 == 0 || _ImidiateStopWatch.IsRunning || _MouseOverWindow)
+                            _LastCursorPosition = await _HyprlandDispatcher.GetCursorPositionAsync();
+                        if (c == 250 || _ImidiateStopWatch.IsRunning || _MouseOverWindow)
+                        {
+                            await UpdateWindowsAsync();
+                            await UpdateFocusableAsync();
+                            c = 0;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ShowError(ex.ToString());
+                }
+                await Task.Delay(1);
+                // stop high polling rates after _ImidiateStopWatchRuntime elapsed
+                if (_ImidiateStopWatch.IsRunning && _ImidiateStopWatch.Elapsed >= _ImidiateStopWatchRuntime)
+                    _ImidiateStopWatch.Stop();
+                //ShowError($"LoopDelay: {delay}");
+                c++;
+                _LoopLock.Release();
+            }
+        }
+
+        async Task UpdateLayersAsync()
+        {
+            // sync layers 
+            var layersPerMonitor = await _HyprlandDispatcher.GetLayersAsync();
+            foreach (var monitorName in layersPerMonitor.Keys)
+            {
+                var levels = layersPerMonitor[monitorName];
+                foreach (var levelKey in levels.levels.Keys)
+                {
+                    var level = int.Parse(levelKey);
+                    if (level == _LayerTop || level == _LayerBottom)
+                    {
+                        var layers = levels.levels[levelKey];
+                        foreach (var layer in layers)
+                        {
+                            if(layer.posVector.y == 0)
+                                continue;
+                            _Layers[layer.addressIntPtr] = new HyprlandClient
+                            {
+                                address = layer.address,
+                                at = new int[] { layer.posVector.x, layer.posVector.y },
+                                floating = false,
+                                size = new int[] { layer.sizeVector.x, layer.sizeVector.y },
+                                pinned = true,
+                                title = layer.name,
+                                pid = layer.pid,
+                                monitor = _Monitors.FirstOrDefault(a => a.name == monitorName)?.id ?? 0
+                            };
+                        }
+                    }
                 }
             }
-            if(_SnappedWindow != null && _Clients.ContainsKey(_SnappedWindow.Value))
+
+            foreach (var address in _Layers.Keys)
             {
-                var snappedWindow = _Clients[_SnappedWindow.Value];
-                var snappedWindowRect = new Rect(snappedWindow.atVector.x ,snappedWindow.atVector.y,snappedWindow.sizeVector.x, snappedWindow.sizeVector.y);
-                _MouseOverWindow = snappedWindowRect.Contains(_LastCursorPosition);
+                if (!layersPerMonitor.Any(a => a.Value.levels.Any(b => b.Value.Any(c => c.addressIntPtr == address))))
+                {
+                    ShowError($"Remove Layer: {address}");
+                    _Layers.TryRemove(address, out _);
+                }
             }
-            //ShowError($"CursorOver: {_CursorOver}");
+
+            // create imaginary layers on each monitor where no bottom dock was found
+            if (_Monitors != null && _Monitors.Length > 0)
+            {
+                foreach (var monitor in _Monitors)
+                {
+                    var hasBottomPanel = _Layers.Any(a => a.Value.atVector.y + a.Value.sizeVector.y == monitor.height && a.Value.sizeVector.x > monitor.width / 2);
+                    if(hasBottomPanel)
+                        continue;
+                    var pointer = new IntPtr(monitor.name.GetHashCode());
+                    if (!_Layers.ContainsKey(pointer))
+                    {
+                        _Layers[pointer] = new HyprlandClient
+                        {
+                            address = IntPtrToHex(pointer),
+                            at = new int[] { 0, monitor.size.y - 2 },
+                            floating = false,
+                            size = new int[] { monitor.size.x, 100 },
+                            pinned = true,
+                            title = monitor.name,
+                            pid = 0,
+                            monitor = monitor.id
+                        };
+                    }
+                }
+            }
+
+            // foreach(var layers in _Layers.Values)
+            //     ShowError($"{layers.address}: {layers.monitor} {layers.title} {layers.atVector} {layers.sizeVector}");
         }
-    }
 
-    List<HyprlandMonitor> _Monitors;
+        ConcurrentDictionary<IntPtr, HyprlandClient> _Layers;
 
-    void UpdateMonitors()
-    {
-        var output = RunCommand(_Hyprctl, "monitors", "-j");
-        output = $"{{ \"monitors\" : {output} }}";
-        var monitors = JsonUtility.FromJson<HyprlandMonitors>(output);
-        // foreach(var mon in monitors.monitors)
-        //     ShowError($"{mon.name}: {mon.position} , {mon.size}");
-        _Monitors = monitors.monitors.ToList();
-    }
+        int _LastHashCode = 0;
 
-    public Vector2Int GetMousePosition() 
-    {
-        return _LastCursorPosition;
-    }
-
-    void SetFocusable(bool focusable)
-    {
-        _Focusable = focusable;
-        SetProp(_Window.address, "no_focus", !focusable);
-    }
-
-    public void SetWindowPosition(Vector2Int position)
-    {
-        // ShowError(position);
-        _NewWindowPosition = position;
-    }
-
-    public void SetWindowSize(Vector2Int size)
-    {
-        // ShowError(size);
-        _NewWindowSize = size;
-    }
-
-    Vector2Int _LastPrintedPost = Vector2Int.zero;
-
-    public Vector2Int GetWindowPosition()
-    {
-        var winPos = _Window.atVector;
-        if(_NewWindowPosition != null)
-            winPos = _NewWindowPosition.Value;
-        // if(_LastPrintedPost != winPos)
-        //     ShowError(winPos);
-        // _LastPrintedPost = winPos;
-        return winPos;
-    }
-
-    private static Vector2Int  HyprlandVectorToVector2Int(string hyprlandVector)
-    {
-        var parts = hyprlandVector.Trim().Split(',');
-        if(parts.Length == 2 && int.TryParse(parts[0], out var x) && int.TryParse(parts[1], out var y))
-            return new Vector2Int(x,y);
-        return Vector2Int.zero;
-    }
-
-    private static void ShowError(object messageObject,[CallerMemberName] string callsource = "")
-    {
-        Console.WriteLine($"\u001b[31m{nameof(HyprlandManager)}.{callsource}: {messageObject}\u001b[0m");
-    }
-
-    static bool CommandSuccessful(string commandoutput) => string.IsNullOrWhiteSpace(commandoutput) || commandoutput?.ToLower() == "ok";
-
-    private static string RunCommand(string file, params string[] arguments)
-    {
-        ProcessStartInfo psi = new ProcessStartInfo()
+        async Task UpdateWindowsAsync()
         {
-            FileName = file,
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        psi.ArgumentList.AddRange(arguments);
+            var clients = await _HyprlandDispatcher.GetClientsAsync();
+            // layout has not changed => skip
+            if (clients.hashCode == _LastHashCode)
+                return;
+            _LastHashCode = clients.hashCode;
 
-        using (Process p = Process.Start(psi))
-        {
-            p?.WaitForExit();
-            return p?.StandardOutput.ReadToEnd().Trim();
+            // detect avatar window
+            if (_Window == null)
+                _Window = clients.clients.FirstOrDefault(a => a.pid == Process.GetCurrentProcess().Id);
+            else
+                _Window = clients.clients.FirstOrDefault(a => a.address == _Window.address);
+            if (_Window == null)
+                return;
+
+            // sync other windows
+            var closedWindows = _Clients.Where(existing => !clients.clients.Any(found => found.address == existing.Value.address)).Select(a => a.Key).ToList();
+            foreach (var closedWindow in closedWindows)
+                _Clients.TryRemove(closedWindow, out _);
+
+            foreach (var client in clients.clients)
+            {
+                // workspace changed of the snapped window before the event caught it
+                if(client.addressIntPtr == _SnappedWindow && client.workspace.id != _Window.workspace.id)
+                {
+                    await _HyprlandDispatcher.MoveWindowToWorkspace(_Window.address, client.workspace.id, true);
+                    _Window.workspace = client.workspace;
+                }
+                _Clients[client.addressIntPtr] = client;
+            }
+
+            // layout changed so trigger high polling rates
+            TriggerImidiateUpdates();
+            // foreach(var client in _Clients)
+            //     ShowError($"{client.Key}: {client.Value.address}, {client.Value.title}, {client.Value.atVector}, {client.Value.sizeVector}");
         }
-    }
 
+        async Task UpdateFocusableAsync()
+        {   
+            // check if user is on an inactive workspace
+            if(_Window.workspace.id != _CurrentWorkspace)
+            {
+                _MouseOverWindow = false;
+                _CursorOver = false;
+                return;
+            }
+            // if the window is being dragged or a menu is open the window is always focusable
+            var forceFocus = MenuActions.IsAnyMenuOpen() || IsDragging;
+            if (forceFocus)
+            {
+                await SetFocusableAsync(true);
+                _MouseOverWindow = true;
+            }
+            else
+            {
+                // check if the mouse is over the window before making more complicated checks
+                var windowRect = new Rect(_Window.atVector.x, _Window.atVector.y, _Window.sizeVector.x, _Window.sizeVector.y);
+                _MouseOverWindow = windowRect.Contains(_LastCursorPosition);
+                if (_MouseOverWindow)
+                {
+                    // check if the mouse is roughly over the avatar
+                    var correction = SaveLoadHandler.Instance.data.avatarSize - 0.10F;
+                    var avatarScale = SaveLoadHandler.Instance.data.avatarSize - (0.28F * correction);
+                    var avatarHeight = _Window.sizeVector.y * avatarScale;
+                    var avatarWidth = avatarHeight / 4.5625F;
+                    var verticalOffset = _Window.sizeVector.y - avatarHeight;
+                    var horizontalOffset = (_Window.sizeVector.x - avatarWidth) / 2;
 
-    public int GetWindowPid(IntPtr window)
-    {
-        var pid = -1;
-        if(window == _XUnityWindow)
-            window = _Window.addressIntPtr;
-        if(_Clients.ContainsKey(window))
-            pid = _Clients[window].pid;
-        // ShowError($"{IntPtrToHex(window)} {pid}");
-        return pid;
-    }
+                    var avatarRectX = _Window.atVector.x + horizontalOffset;
+                    var avatarRectY = _Window.atVector.y + verticalOffset;
+                    var avatarRectWidth =  _Window.sizeVector.x - horizontalOffset * 2;
+                    var avatarRectHeight = _Window.sizeVector.y - verticalOffset;
+                    if(avatarRectX < 0)
+                        avatarRectX = 0;
+                    var monitor = _Monitors[_Window.monitor];
+                    if(avatarRectX + avatarWidth > monitor.width)
+                        avatarRectX = monitor.width - avatarWidth;
+                    //ShowError($"windowRect: {windowRect}");
 
-    public List<IntPtr> FindWindowsByPid(int targetPid)
-    {
-        var windows = _Clients.Where(a => a.Value.pid == targetPid).Select(a => a.Key).ToList();
-        // ShowError($"{targetPid} {string.Join(",",windows.Select(a => IntPtrToHex(a)))}");
-        return windows;
-    }
+                    var avatarRect = new Rect(avatarRectX, avatarRectY,avatarRectWidth, avatarRectHeight);
+                    //ShowError($"avatarRect: {avatarRect}");
+                    var cursorOver = avatarRect.Contains(_LastCursorPosition);
+                    if (_CursorOver != cursorOver)
+                    {
+                        await SetFocusableAsync(cursorOver);
+                        _CursorOver = cursorOver;
+                    }
+                }
+                //ShowError($"CursorOver: {_CursorOver}");
+            }
+        }
 
-    public List<IntPtr> GetAllVisibleWindows()
-    {
-        var windows = _Clients.Keys.ToList();
-        // ShowError(string.Join(",",windows));
-        return windows;
-    }
+        HyprlandMonitor[] _Monitors;
 
-    public bool IsWindowVisible(IntPtr window)
-    {
-        var client = FindWindowOnWorkspace(window);
-        var hidden = !client?.hidden ?? true;
-        //ShowError($"{IntPtrToHex(window)} {hidden}");
-        return hidden;
-    }
-
-    public void SetTopmost(bool topmost)
-    {
-        // hyprland does not support this
-    }
-
-    public bool IsWindowFullscreen(IntPtr window)
-    {
-        var client = FindWindowOnWorkspace(window);
-        var fullscreen = client?.fullscreen == 2;
-        //ShowError($"{IntPtrToHex(window)} {fullscreen}");
-        return fullscreen;
-    }
-
-    public bool IsWindowMaximized(IntPtr window)
-    {
-        var client = FindWindowOnWorkspace(window);
-        var maximixed = client?.fullscreen == 1;
-        //ShowError($"{IntPtrToHex(window)} {maximixed}");
-        return maximixed;
-    }
-
-    public Vector2Int GetWindowSize(IntPtr window)
-    {
-        var w = FindWindowOnWorkspace(window);
-        if(w == null)
-            w = _Window;
-        var size = w.sizeVector;
-        if(w == _Window && _NewWindowSize != null)
-            size = _NewWindowSize.Value;
-        // ShowError(size.ToString());
-        return size;
-    }
-
-    public Vector2Int GetTotalDisplaySize()
-    {
-        
-        var rects = GetAllMonitors();
-        var minX = Math.Abs(rects.Min(a => a.Rect.x));
-        var minY = Math.Abs(rects.Min(a => a.Rect.y));
-        var maxX = rects.Max(a => a.Rect.x);
-        var maxY = rects.Max(a => a.Rect.y);
-        var rightMost = rects.OrderByDescending(a => a.Rect.x).FirstOrDefault().Rect;
-        var bottomMost = rects.OrderByDescending(a => a.Rect.y).FirstOrDefault().Rect;
-
-        var width = minX + maxX + rightMost.width;
-        var height = minY + maxY + bottomMost.height;
-        var display = new Vector2Int(width,height);
-        // ShowError(display);
-        return display;
-    }
-
-    public bool GetWindowRect(IntPtr window,out RectInt rect)
-    {
-        var w = FindWindowOnWorkspace(window);
-        if(w == null)
+        public Vector2Int GetMousePosition()
         {
-            ShowError($"{IntPtrToHex(window)}");
-            rect = RectInt.zero;
+            return _LastCursorPosition;
+        }
+
+        async Task SetFocusableAsync(bool focusable)
+        {
+            await _HyprlandDispatcher.SetPropAsync(_Window.address, "no_focus", !focusable);
+        }
+
+        public async void SetWindowPosition(Vector2Int position)
+        {
+            // ShowError(position);
+            await _HyprlandDispatcher.MoveWindowPixelExactAsync(_Window.address, position);
+            _Window.at = new int[] { position.x, position.y };
+            TriggerImidiateUpdates();
+        }
+
+        public async void SetWindowSize(Vector2Int size)
+        {
+            TriggerImidiateUpdates();
+            // ShowError(size);
+            await _HyprlandDispatcher.ResizewindowpixelExactWindowSizeAsync(_Window.address, size);
+            _Window.size = new int[] { size.x, size.y };
+        }
+
+        Vector2Int _LastPrintedPost = Vector2Int.zero;
+
+        public Vector2Int GetWindowPosition()
+        {
+            return _Window.atVector;
+        }
+
+        private static void ShowError(object messageObject, [CallerMemberName] string callsource = "")
+        {
+            Console.WriteLine($"\u001b[31m{nameof(HyprlandManager)}.{callsource}: {messageObject}\u001b[0m");
+        }
+
+        public int GetWindowPid(IntPtr window)
+        {
+            var pid = -1;
+            if (window == _XUnityWindow)
+                window = _Window.addressIntPtr;
+            if (_Clients.ContainsKey(window))
+                pid = _Clients[window].pid;
+            // ShowError($"{IntPtrToHex(window)} {pid}");
+            return pid;
+        }
+
+        public List<IntPtr> FindWindowsByPid(int targetPid)
+        {
+            var windows = _Clients.Where(a => a.Value.pid == targetPid).Select(a => a.Key).ToList();
+            // ShowError($"{targetPid} {string.Join(",",windows.Select(a => IntPtrToHex(a)))}");
+            return windows;
+        }
+
+        public List<IntPtr> GetAllVisibleWindows()
+        {
+            var windows = _Clients.Keys.ToList();
+            // ShowError(string.Join(",",windows));
+            return windows;
+        }
+
+        public bool IsWindowVisible(IntPtr window)
+        {
+            var client = FindClientByWindowId(window);
+            var hidden = !client?.hidden ?? true;
+            //ShowError($"{IntPtrToHex(window)} {hidden}");
+            return hidden;
+        }
+
+        public void SetTopmost(bool topmost)
+        {
+            // hyprland does not support this
+            // this can either be done with full native wayland support window (by creating it as a layer) 
+            // or with a hyprland plugin that wraps the window (similar to hyprwinwrap)
+        }
+
+        public bool IsWindowFullscreen(IntPtr window)
+        {
+            var client = FindClientByWindowId(window);
+            var fullscreen = client?.fullscreen == 2;
+            //ShowError($"{IntPtrToHex(window)} {fullscreen}");
+            return fullscreen;
+        }
+
+        public bool IsWindowMaximized(IntPtr window)
+        {
+            var client = FindClientByWindowId(window);
+            var maximixed = client?.fullscreen == 1;
+            //ShowError($"{IntPtrToHex(window)} {maximixed}");
+            return maximixed;
+        }
+
+        public Vector2Int GetWindowSize(IntPtr window)
+        {
+            var w = FindClientByWindowId(window);
+            if (w == null)
+                w = _Window;
+            return w.sizeVector;
+        }
+
+        public Vector2Int GetTotalDisplaySize()
+        {
+            var rects = GetAllMonitors();
+            var minX = Math.Abs(rects.Min(a => a.Rect.x));
+            var minY = Math.Abs(rects.Min(a => a.Rect.y));
+            var maxX = rects.Max(a => a.Rect.x);
+            var maxY = rects.Max(a => a.Rect.y);
+            var rightMost = rects.OrderByDescending(a => a.Rect.x).FirstOrDefault().Rect;
+            var bottomMost = rects.OrderByDescending(a => a.Rect.y).FirstOrDefault().Rect;
+
+            var width = minX + maxX + rightMost.width;
+            var height = minY + maxY + bottomMost.height;
+            var display = new Vector2Int(width, height);
+            // ShowError(display);
+            return display;
+        }
+
+        public bool GetWindowRect(IntPtr window, out RectInt rect)
+        {
+            var w = FindClientByWindowId(window);
+            if (w == null)
+            {
+                ShowError($"{IntPtrToHex(window)}");
+                rect = RectInt.zero;
+                return false;
+            }
+            var pos = w.atVector;
+            var size = w.sizeVector;
+            // tiled windows returned  with reduced height to enable snapping
+            if (w != _Window && !w.floating)
+                size = new Vector2Int(w.sizeVector.x, 100); 
+            rect = new RectInt(pos, size);
+            // ShowError($"{IntPtrToHex(window)} {rect} {w.initialClass}");
+            return true;
+        }
+
+        HyprlandClient FindClientByWindowId(IntPtr window)
+        {
+            if (_Window == null)
+                return null;
+            if (window == _XUnityWindow)
+                window = _Window.addressIntPtr;
+            if (_Clients.ContainsKey(window))
+                return _Clients[window];
+            if (_Layers.ContainsKey(window))
+                return _Layers[window];
+            return null;
+        }
+
+        Dictionary<IntPtr, HyprlandClient> GetAllClientsOnWorkspace()
+        {
+            if (_Window == null)
+                return null;
+            var windows = new Dictionary<IntPtr, HyprlandClient>();
+            foreach (var client in _Clients.ToList())
+            {
+                if (client.Value.workspace.id == _Window.workspace.id || client.Value.pinned)
+                    windows.Add(client.Key, client.Value);
+            }
+            return windows;
+        }
+
+        public List<IntPtr> GetClientStackingList()
+        {
+            var windowsOnWorkspace = GetAllClientsOnWorkspace();
+            var stacking = new List<IntPtr>();
+
+            if (_Window != null)
+            {
+                // remove the avatar window
+                windowsOnWorkspace.Remove(_Window.addressIntPtr);
+                // add surfaces in selected layers
+                stacking.AddRange(_Layers.Where(a => a.Value.monitor == _Window.monitor).Select(a => a.Key));
+            }
+            // add the tiled windows
+            stacking.AddRange(windowsOnWorkspace.Where(a => !a.Value.floating).Select(a => a.Key));
+            // add floating windows
+            stacking.AddRange(windowsOnWorkspace.Where(a => a.Value.floating).OrderBy(a => a.Value.focusHistoryID).Select(a => a.Key));
+            // ShowError(string.Join(",", stackingPointers));
+            return stacking;
+        }
+
+        public List<(IntPtr Id, RectInt Rect)> GetAllMonitors()
+        {
+            var monitors = _Monitors.Select(a => (new IntPtr(a.id), new RectInt(a.position, a.size))).ToList();
+            // ShowError(string.Join(";", monitors.Select(a => $"{a.Item1}:({a.Item2})")));
+            return monitors;
+        }
+
+        public bool IsDesktop(IntPtr window)
+        {
+            // wayland handles such things via surfaces in the background layers,
+            // surfaces in the background layer are already filtered out
             return false;
         }
-        var pos = w.atVector;
-        var size = w.sizeVector;
-        if(w == _Window)
+
+        public bool IsDock(IntPtr window)
         {
-            if(_NewWindowPosition != null)
-                pos = _NewWindowPosition.Value;
-            if(_NewWindowSize != null)
-                size = _NewWindowSize.Value;
+            // if the window is on a layer its a surface
+            return _Layers.ContainsKey(window);
         }
-        else if(!w.floating)
+
+        public string GetClassName(IntPtr window)
         {
-            size = new Vector2Int(w.sizeVector.x, 100); // tiled windows returned  with reduced height to enable sitting
+            var className = FindClientByWindowId(window)?.initialClass ?? string.Empty;
+            // ShowError($"{IntPtrToHex(window)} : {className}");
+            return className;
         }
-        rect = new RectInt(pos,size);
-        // ShowError($"{IntPtrToHex(window)} {rect} {w.initialClass}");
-        return true;
-    }
 
-    HyprlandClient FindWindowOnWorkspace(IntPtr window)
-    {
-        if(_Clients == null)
-            UpdateWindows();
-        if(window == _XUnityWindow)
-            window = _Window.addressIntPtr;
-        if(_Clients.ContainsKey(window))
+        public void Dispose()
         {
-            var client = _Clients[window];
-            if(client.workspace.id == _Window.workspace.id || client.pinned)
-                return client;
+            _CancellationTokenSource.Cancel();
+            _LoopTask?.Dispose();
+            _HyprlandDispatcher?.Dispose();
+            _HyprlandEventReader?.Dispose();
         }
-        return null;
-    }
 
-    Dictionary<IntPtr, HyprlandClient> FindWindowOnWorkspace()
-    {
-         if(_Window == null)
-            UpdateWindows();
-        var windows = new Dictionary<IntPtr, HyprlandClient>();
-        foreach(var client in _Clients.ToList())
+        IntPtr? _XUnityWindow;
+
+        public void SetXUnityWindow(IntPtr unityWindow)
         {
-            if(client.Value.workspace.id == _Window.workspace.id || client.Value.pinned)
-                windows.Add(client.Key, client.Value);
+            // store the XWindow so that the hyprland manager recognizes it as the avatarwindow
+            // ShowError(IntPtrToHex(unityWindow));
+            _XUnityWindow = unityWindow;
         }
-        return windows;
-    }
 
-    public List<IntPtr> GetClientStackingList()
-    {
-        var windowsOnWorkspace = FindWindowOnWorkspace();
-        if(_Window != null)
-            windowsOnWorkspace.Remove(_Window.addressIntPtr);
-        var stacking = windowsOnWorkspace.Where(a => !a.Value.floating).ToList();
-        stacking.AddRange(windowsOnWorkspace.Where(a => a.Value.floating).OrderBy(a => a.Value.focusHistoryID));
-        var stackingPointers = stacking.Select(a => a.Key).ToList();
-        // ShowError(string.Join(",", stackingPointers));
-        return stackingPointers;
-    }
+        IntPtr? _SnappedWindow;
 
-    public List<(IntPtr Id, RectInt Rect)> GetAllMonitors()
-    {
-        if(_Monitors == null)
-            UpdateMonitors();
-        var monitors = _Monitors.Select(a => (new IntPtr(a.id), new RectInt(a.position,a.size))).ToList();
-        // ShowError(string.Join(";", monitors.Select(a => $"{a.Item1}:({a.Item2})")));
-        return monitors;
-    }
+        public async void SetSnapedWindow(IntPtr window)
+        {
+            // set the snapped window and sync the pin state
+            if (window != IntPtr.Zero)
+            {
+                _SnappedWindow = window;
+                await SetPinStateAsync();
+            }
+            else
+            {
+                _SnappedWindow = null;
+                await RestorePinStateAsync();
+            }
+            //ShowError($"SnappedWindow: {IntPtrToHex(window)}");
+        }
 
-    public bool IsDesktop(IntPtr window)
-    {
-        return false;
-    }
+        async Task RestorePinStateAsync()
+        {
+            // restore the pin state after unsnapping the window
+            if (_DefaultPinState.HasValue && _Window.pinned != _DefaultPinState.Value)
+            {
+                await _HyprlandDispatcher.TogglePinAsync(_Window.address);
+                _DefaultPinState = null;
+            }
+        }
 
-    public bool IsDock(IntPtr window) => false;
-
-    public string GetClassName(IntPtr window)
-    {
-        var className = FindWindowOnWorkspace(window)?.initialClass ?? string.Empty;
-        // ShowError($"{IntPtrToHex(window)} : {className}");
-        return className;
-    }
-
-    public void Dispose()
-    {
-        _CancellationTokenSource.Cancel();
-        _LoopTask?.Dispose();
-    }
-
-    IntPtr? _XUnityWindow;
-
-    public void SetXUnityWindow(IntPtr unityWindow)
-    {
-        // ShowError(IntPtrToHex(unityWindow));
-        _XUnityWindow = unityWindow;
-    }
-
-    IntPtr? _SnappedWindow;
-
-    public void SetSnapedWindow(IntPtr window)
-    {
-        if(window != IntPtr.Zero)
-            _SnappedWindow = window;
-        else
-            _SnappedWindow = null;
-        //ShowError($"SnappedWindow: {IntPtrToHex(window)}");
+        async Task SetPinStateAsync()
+        {
+            // get the default pin state
+            if (_DefaultPinState == null)
+                _DefaultPinState = _Window.pinned;
+            // set the pin state to that of the window/surface
+            if ((_Clients.ContainsKey(_SnappedWindow.Value) && _Window.pinned != _Clients[_SnappedWindow.Value].pinned) ||
+               (_Layers.ContainsKey(_SnappedWindow.Value) && _Window.pinned != true))
+                await _HyprlandDispatcher.TogglePinAsync(_Window.address);
+        }
     }
 }
