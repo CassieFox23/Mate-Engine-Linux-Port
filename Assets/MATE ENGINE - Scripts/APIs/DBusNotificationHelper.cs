@@ -11,12 +11,25 @@ public interface INotifications : IDBusObject
 
 public class DBusNotificationHelper : Singleton<DBusNotificationHelper>
 {
-    public Connection Connection;
+    private Connection _connection;
 
     private INotifications _proxy;
 
+    private bool _initialized;
+
+    public void Init(Connection connection)
+    {
+        _connection = connection;
+        _proxy = _connection.CreateProxy<INotifications>(
+            "org.freedesktop.Notifications",
+            "/org/freedesktop/Notifications"
+        );
+        _initialized = true;
+    }
+
     public async Task<uint> Send(string title, string message, string icon = "dialog-information", string[] actions = null, int timeout = 5000)
     {
+        if (!_initialized) return uint.MaxValue;
         string appName = "Mate Engine";
         uint replacesId = 0;
         actions ??= Array.Empty<string>();
@@ -24,11 +37,6 @@ public class DBusNotificationHelper : Singleton<DBusNotificationHelper>
         {
             { "desktop-entry", "mateengine" } 
         };
-        
-        _proxy = Connection.CreateProxy<INotifications>(
-            "org.freedesktop.Notifications",
-            "/org/freedesktop/Notifications"
-        );
 
         return await _proxy.NotifyAsync(appName, replacesId, icon, title, message, actions, hints, timeout);
     }

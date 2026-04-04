@@ -1997,18 +1997,18 @@ MonoBehaviour:
     m_Metadata:
       m_Items: []
   - m_Id: 128117097725030400
-    m_Localized: Force KWin Scripting API
+    m_Localized: Enable KWin Scripting API
     m_Metadata:
       m_Items: []
   - m_Id: 128118702650290176
-    m_Localized: "When enabled, all window management operations will be forcibly
-      executed through KWin's DBus scripting interface. It works by dynamically generating
-      and running JavaScript scripts to communicate with the KDE window manager.\n\nBy
-      enabling this option, you allow us to frequently rewrite and run a tiny script
-      under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet.
-      \n\nNote that this feature is currently very buggy, and it only works in the
-      KDE Plasma desktop environment.\n\nUnless you have an urgent need for your
-      pet to sit on windows in Plasma Wayland, this option should not be enabled."
+    m_Localized: "When enabled, window management operations will be executed through
+      KWin's DBus scripting interface. It works by dynamically generating and running
+      JavaScript scripts to communicate with the KDE window manager.\n\nBy enabling
+      this option, you allow us to frequently rewrite and run a tiny script under
+      /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. \n\nNote
+      that this feature is currently experimental. Unless you have an urgent need
+      for your pet to sit on windows in Plasma Wayland, this option should not be
+      enabled.\n\nRestart MateEngine to apply this feature."
     m_Metadata:
       m_Items: []
   references:

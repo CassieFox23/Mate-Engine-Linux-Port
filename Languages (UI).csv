@@ -566,83 +566,83 @@ Recommended for systems with 16GB RAM or less. Require at least 1 GiB swap space
 "LSS_WINTYPE_NORMAL",107788295882268672,"Normal","Normal","Normal","Normal","常规","Normal","Normal","Normal","Normal","Normal","Normal","Normal","Normal"
 "LSS_WINTYPE_DOCK",107788836884570112,"Dock","Dock","Dock","Dock","程序钨","Dock","Dock","Dock","Dock","Dock","Dock","Dock","Dock"
 "CANCEL",107789566945124352,"Cancel","Cancel","Cancel","Cancel","取消","Cancel","Cancel","Cancel","Cancel","Cancel","Cancel","Cancel","Cancel"
-"LSS_KWIN",128117097725030400,"Force KWin Scripting API","Force KWin Scripting API","Force KWin Scripting API","Force KWin Scripting API","强制使用 KWin 脚本 API","Force KWin Scripting API","Force KWin Scripting API","Force KWin Scripting API","Force KWin Scripting API","Force KWin Scripting API","Force KWin Scripting API","Force KWin Scripting API","Force KWin Scripting API"
-"LSS_KWIN_TIP",128118702650290176,"When enabled, all window management operations will be forcibly executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
+"LSS_KWIN",128117097725030400,"Enable KWin Scripting API","Enable KWin Scripting API","Enable KWin Scripting API","Enable KWin Scripting API","启用 KWin 脚本 API","Enable KWin Scripting API","Enable KWin Scripting API","Enable KWin Scripting API","Enable KWin Scripting API","Enable KWin Scripting API","Enable KWin Scripting API","Enable KWin Scripting API","Enable KWin Scripting API"
+"LSS_KWIN_TIP",128118702650290176,"When enabled, window management operations will be executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
 
 By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
 
-Note that this feature is currently very buggy, and it only works in the KDE Plasma desktop environment.
+Note that this feature is currently experimental. Unless you have an urgent need for your pet to sit on windows in Plasma Wayland, this option should not be enabled.
 
-Unless you have an urgent need for desktop pets to sit on windows in Plasma Wayland, this option should not be enabled.","When enabled, all window management operations will be forcibly executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
-
-By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
-
-Note that this feature is currently very buggy, and it only works in the KDE Plasma desktop environment.
-
-Unless you have an urgent need for desktop pets to sit on windows in Plasma Wayland, this option should not be enabled.","When enabled, all window management operations will be forcibly executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
+Restart MateEngine to apply this feature.","When enabled, window management operations will be executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
 
 By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
 
-Note that this feature is currently very buggy, and it only works in the KDE Plasma desktop environment.
+Note that this feature is currently experimental. Unless you have an urgent need for your pet to sit on windows in Plasma Wayland, this option should not be enabled.
 
-Unless you have an urgent need for desktop pets to sit on windows in Plasma Wayland, this option should not be enabled.","When enabled, all window management operations will be forcibly executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
+Restart MateEngine to apply this feature.","When enabled, window management operations will be executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
 
 By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
 
-Note that this feature is currently very buggy, and it only works in the KDE Plasma desktop environment.
+Note that this feature is currently experimental. Unless you have an urgent need for your pet to sit on windows in Plasma Wayland, this option should not be enabled.
 
-Unless you have an urgent need for desktop pets to sit on windows in Plasma Wayland, this option should not be enabled.","启用此选项后，所有窗口管理操作都将强制通过 KWin 的 DBus 脚本接口执行。其原理是动态生成并运行 JavaScript 脚本，从而与 KDE 窗口管理器进行通信。
+Restart MateEngine to apply this feature.","When enabled, window management operations will be executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
+
+By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
+
+Note that this feature is currently experimental. Unless you have an urgent need for your pet to sit on windows in Plasma Wayland, this option should not be enabled.
+
+Restart MateEngine to apply this feature.","启用此选项后，窗口管理操作将通过 KWin 的 DBus 脚本接口执行。其原理是动态生成并运行 JavaScript 脚本，从而与 KDE 窗口管理器进行通信。
 
 开启此功能即表示您允许程序在 /tmp/Shinymoon/MateEngineX/ 路径下频繁重写并运行一段微型脚本，以便在您拖动桌面宠物时同步移动窗口。
 
-此功能目前很不稳定，且仅在 KDE Plasma 桌面环境下生效。
+此功能目前属于实验性功能。除非你迫切需要你的宠物在 KDE Plasma (Wayland) 环境下的窗口上坐下，否则不应启用此选项。
 
-除非你迫切需要桌面宠物在 KDE Plasma (Wayland) 环境下的窗口上坐下，否则不应启用此选项。","When enabled, all window management operations will be forcibly executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
-
-By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
-
-Note that this feature is currently very buggy, and it only works in the KDE Plasma desktop environment.
-
-Unless you have an urgent need for desktop pets to sit on windows in Plasma Wayland, this option should not be enabled.","When enabled, all window management operations will be forcibly executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
+重启 MateEngine 以应用此功能。","When enabled, window management operations will be executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
 
 By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
 
-Note that this feature is currently very buggy, and it only works in the KDE Plasma desktop environment.
+Note that this feature is currently experimental. Unless you have an urgent need for your pet to sit on windows in Plasma Wayland, this option should not be enabled.
 
-Unless you have an urgent need for desktop pets to sit on windows in Plasma Wayland, this option should not be enabled.","When enabled, all window management operations will be forcibly executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
-
-By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
-
-Note that this feature is currently very buggy, and it only works in the KDE Plasma desktop environment.
-
-Unless you have an urgent need for desktop pets to sit on windows in Plasma Wayland, this option should not be enabled.","When enabled, all window management operations will be forcibly executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
+Restart MateEngine to apply this feature.","When enabled, window management operations will be executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
 
 By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
 
-Note that this feature is currently very buggy, and it only works in the KDE Plasma desktop environment.
+Note that this feature is currently experimental. Unless you have an urgent need for your pet to sit on windows in Plasma Wayland, this option should not be enabled.
 
-Unless you have an urgent need for desktop pets to sit on windows in Plasma Wayland, this option should not be enabled.","When enabled, all window management operations will be forcibly executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
-
-By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
-
-Note that this feature is currently very buggy, and it only works in the KDE Plasma desktop environment.
-
-Unless you have an urgent need for desktop pets to sit on windows in Plasma Wayland, this option should not be enabled.","When enabled, all window management operations will be forcibly executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
+Restart MateEngine to apply this feature.","When enabled, window management operations will be executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
 
 By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
 
-Note that this feature is currently very buggy, and it only works in the KDE Plasma desktop environment.
+Note that this feature is currently experimental. Unless you have an urgent need for your pet to sit on windows in Plasma Wayland, this option should not be enabled.
 
-Unless you have an urgent need for desktop pets to sit on windows in Plasma Wayland, this option should not be enabled.","When enabled, all window management operations will be forcibly executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
-
-By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
-
-Note that this feature is currently very buggy, and it only works in the KDE Plasma desktop environment.
-
-Unless you have an urgent need for desktop pets to sit on windows in Plasma Wayland, this option should not be enabled.","When enabled, all window management operations will be forcibly executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
+Restart MateEngine to apply this feature.","When enabled, window management operations will be executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
 
 By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
 
-Note that this feature is currently very buggy, and it only works in the KDE Plasma desktop environment.
+Note that this feature is currently experimental. Unless you have an urgent need for your pet to sit on windows in Plasma Wayland, this option should not be enabled.
 
-Unless you have an urgent need for desktop pets to sit on windows in Plasma Wayland, this option should not be enabled."
+Restart MateEngine to apply this feature.","When enabled, window management operations will be executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
+
+By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
+
+Note that this feature is currently experimental. Unless you have an urgent need for your pet to sit on windows in Plasma Wayland, this option should not be enabled.
+
+Restart MateEngine to apply this feature.","When enabled, window management operations will be executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
+
+By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
+
+Note that this feature is currently experimental. Unless you have an urgent need for your pet to sit on windows in Plasma Wayland, this option should not be enabled.
+
+Restart MateEngine to apply this feature.","When enabled, window management operations will be executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
+
+By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
+
+Note that this feature is currently experimental. Unless you have an urgent need for your pet to sit on windows in Plasma Wayland, this option should not be enabled.
+
+Restart MateEngine to apply this feature.","When enabled, window management operations will be executed through KWin's DBus scripting interface. It works by dynamically generating and running JavaScript scripts to communicate with the KDE window manager.
+
+By enabling this option, you allow us to frequently rewrite and run a tiny script under /tmp/Shinymoon/MateEngineX/ to move the window when you drag your pet. 
+
+Note that this feature is currently experimental. Unless you have an urgent need for your pet to sit on windows in Plasma Wayland, this option should not be enabled.
+
+Restart MateEngine to apply this feature."

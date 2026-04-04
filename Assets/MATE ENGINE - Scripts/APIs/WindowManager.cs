@@ -83,7 +83,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
             if (_currentSessionType == SessionTypes.Wayland)
             {
-                Singleton<DBusNotificationHelper>.Instance.Connection = connection;
+                Singleton<DBusNotificationHelper>.Instance.Init(connection);
                 await Singleton<DBusNotificationHelper>.Instance.Send("Wayland is not fully supported by MateEngine",
                     "Although Wayland improves security, its fundamental design choices prevent MateEngine (and other X11 applications) from getting window information." +
                     "Thus, features like window-sitting could hardly be implemented under various Wayland-based DEs. Please use X11 DEs to enjoy the best of MateEngine.",
