@@ -586,7 +586,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     {
         _monitors = new();
         _monitors.Clear();
-        if(_windowManagerImplementation != null)
+        if(_windowManagerImplementation != null && _currentDesktopEnv != DesktopEnvironments.Kde)
         {
             foreach(var m in _windowManagerImplementation.GetAllMonitors())
                 _monitors[m.Id] = m.Rect;
@@ -841,6 +841,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     {
         if (!GetWindowRect(window, out var winRect)) return new RectInt();
         var center = new Vector2Int(winRect.x + winRect.width / 2, winRect.y + winRect.height / 2);
+        print(center);
         var resultBasedOnWindowCenterPnt = GetMonitorRectFromPoint(center);
         if (resultBasedOnWindowCenterPnt == RectInt.zero)
         {

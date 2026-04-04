@@ -85,7 +85,7 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
     private ConnectionInfo _connectionInfo;
     private KWinCallbackReceiver _callbackHandler;
     private string _kdeVersion;
-    private string _unityUuid;
+    private KWinUUID _unityUuid;
     private string _tempPath;
     private IScripting _scripting;
     private string _template;
@@ -95,8 +95,8 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
     Task _LoopTask;
 
     private readonly List<KWinClient> _cachedClients = new();
-    private Dictionary<IntPtr, string> _ptrToUuidMap = new();
-    private Dictionary<string, IntPtr> _uuidToPtrMap = new();
+    private Dictionary<IntPtr, KWinUUID> _ptrToUuidMap = new();
+    private Dictionary<KWinUUID, IntPtr> _uuidToPtrMap = new();
     private int _ptrCounter = 1;
     
     private Vector2Int _mousePos;
@@ -108,10 +108,9 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
         _CancellationTokenSource = new CancellationTokenSource();
         _kdeVersion = Environment.GetEnvironmentVariable("KDE_SESSION_VERSION") ?? "6";
         _tempPath = Application.temporaryCachePath;
-        _LoopTask = Task.Run(async () => Update(_CancellationTokenSource.Token), _CancellationTokenSource.Token);
+        _LoopTask = Task.Run(() => Update(_CancellationTokenSource.Token), _CancellationTokenSource.Token);
     }
-
-
+    
     public async Task SetupDBus()
     {
         if (_initialized) return;
@@ -136,65 +135,76 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
         _scripting = _connection.CreateProxy<IScripting>("org.kde.KWin", "/Scripting");
 
         _dbusReady = true;
-        _unityUuid = GetSelfWindowUuid();
-        _initialized = true;
     }
 
-    async Task Update(CancellationToken cancellationToken)
+    private async Task Update(CancellationToken cancellationToken)
     {
+        
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                if (string.IsNullOrEmpty(_unityUuid))
+                if (_dbusReady)
                 {
-                    UpdateWindows();
+                    await UpdateWindows();
                 }
             }
             catch (Exception e)
             {
-                Console.WriteLine(e);
+                UnityEngine.Debug.LogException(e);
                 throw;
             }
+
+            if (!_initialized)
+            {
+                _unityUuid = GetSelfWindowUuid();
+                if (_unityUuid != string.Empty)
+                    _initialized = true;
+            }
+            
+            await Task.Delay(16, cancellationToken);
         }
     }
 
-    private void UpdateWindows()
+    private async Task UpdateWindows()
     {
-        _cachedClients.Clear();
-        var activeUuids = new HashSet<string>();
-        var resultLines = Task.Run(GetAllInOne).GetAwaiter().GetResult();
+        var cachedClients = new List<KWinClient>();
+        var activeUuids = new HashSet<KWinUUID>();
+        var resultLines = await GetAllInOne();
         foreach (var line in resultLines)
         {
-            if (!line.StartsWith("Mouse:"))
-            {
-                var prop = line.Split(":");
-                string uuid = prop[0];
-                int.TryParse(prop[1], out var pid);
-                activeUuids.Add(uuid);
-                var parts = prop[2].Split(',');
-                _cachedClients.Add(new KWinClient
-                {
-                    Hwnd = GetPtrFromUuid(uuid), Pid = pid, Uuid = uuid,
-                    Rect = new RectInt(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]),
-                        int.Parse(parts[3]))
-                });
-            }
-            else
+            if (line.StartsWith("Mouse:"))
             {
                 var mouse = line.Split(":")[1];
                 int.TryParse(mouse.Split(",")[0], out var x);
                 int.TryParse(mouse.Split(",")[1], out var y);
                 _mousePos = new Vector2Int(x, y);
             }
+            else
+            {
+                var prop = line.Split(":");
+                var uuid = prop[0];
+                int.TryParse(prop[1], out var pid);
+                activeUuids.Add(uuid);
+                var parts = prop[2].Split(',');
+                cachedClients.Add(new KWinClient
+                {
+                    Hwnd = GetPtrFromUuid(uuid), Pid = pid, Uuid = uuid,
+                    Rect = new RectInt(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]),
+                        int.Parse(parts[3]))
+                });
+            }
         }
         var deadUuids = _uuidToPtrMap.Keys.Where(u => !activeUuids.Contains(u)).ToList();
         foreach (var uuid in deadUuids)
         {
-            IntPtr ptr = _uuidToPtrMap[uuid];
+            var ptr = _uuidToPtrMap[uuid];
             _uuidToPtrMap.Remove(uuid);
             _ptrToUuidMap.Remove(ptr);
         }
+        
+        _cachedClients.Clear();
+        _cachedClients.AddRange(cachedClients);
     }
 
     private IntPtr GetPtrFromUuid(string uuid)
@@ -204,20 +214,20 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
         if (_uuidToPtrMap.TryGetValue(uuid, out var existingPtr))
             return existingPtr;
     
-        IntPtr newPtr = new IntPtr(_ptrCounter++);
+        var newPtr = new IntPtr(_ptrCounter++);
         _ptrToUuidMap[newPtr] = uuid;
         _uuidToPtrMap[uuid] = newPtr;
         return newPtr;
     }
 
-    private string GetUuidFromPtr(IntPtr ptr)
+    private KWinUUID GetUuidFromPtr(IntPtr ptr)
     {
         return _ptrToUuidMap.TryGetValue(ptr, out string uuid) ? uuid : _unityUuid;
     }
     
     public void SetWindowPosition(Vector2Int position)
     {
-        Task.Run(() => MoveWindow(new Vector2(position.x, position.y))).GetAwaiter().GetResult();
+        Task.Run(() => MoveWindow(new Vector2Int(position.x, position.y))).GetAwaiter().GetResult();
     }
 
     public void SetWindowSize(Vector2Int size)
@@ -309,45 +319,53 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
     private KWinUUID GetSelfWindowUuid()
     {
         if (_cachedClients.Count == 0)
-            UpdateWindows();
-        return _cachedClients.Find(client => client.Pid == Process.GetCurrentProcess().Id).Uuid;
+            return string.Empty;
+        var self = _cachedClients.Find(client => client.Pid == Process.GetCurrentProcess().Id);
+        return self?.Uuid ?? string.Empty;
     }
 
     private async Task<List<string>> GetAllInOne()
     {
         if (!_dbusReady) return new List<string>();
-        string scriptName = "KWin_GetAllWin.js";
-        string jsScript = _template.Replace("placeholder", "KWin_GetAllWin") + $@"
+        string scriptName = "KWin_GetAll.js";
+        string jsScript = _template.Replace("placeholder", "KWin_GetAll") + $@"
             for (let win of workspace.{(_kdeVersion.StartsWith("5") ? "clientList" : "windowList")}()) {{
                 send(win.internalId.toString() + ':' + win.pid.toString() + ':' + win.frameGeometry.x + ',' + win.frameGeometry.y + ',' + win.frameGeometry.width + ',' + win.frameGeometry.height);
             }}
-            send('Mouse:' + workspace.cursorPos.x + ',' + workspace.cursorPos.y)
+            send('Mouse:' + workspace.cursorPos.x + ',' + workspace.cursorPos.y);
             done();";
         
-        if (!File.Exists(Path.Combine(_tempPath, scriptName))) File.WriteAllText(Path.Combine(_tempPath, scriptName), jsScript);
-        return await ExecuteKWinScript(scriptName, true);
+        if (!File.Exists(Path.Combine(_tempPath, scriptName))) await File.WriteAllTextAsync(Path.Combine(_tempPath, scriptName), jsScript);
+        return await ExecuteKWinScript(scriptName, false);
     }
 
-    public RectInt GetWindowGeometry(string uuid = null)
+    private RectInt GetWindowGeometry(string uuid)
     {
-        if (!_initialized) return RectInt.zero;
-        return _cachedClients.Find(client => client.Uuid == uuid).Rect;
+        if (!_initialized || string.IsNullOrEmpty(uuid)) return RectInt.zero;
+    
+        var client = _cachedClients.Find(c => c.Uuid == uuid);
+        if (client != null)
+        {
+            return client.Rect;
+        }
+    
+        return RectInt.zero;
     }
 
-    public async Task MoveWindow(Vector2 pos)
+    private async Task MoveWindow(Vector2Int pos)
     {
         if (!_initialized) return;
         string scriptName = $"KWin_MoveWin.js"; 
         string jsScript = _template.Replace("placeholder", "KWin_MoveWin") + $@"
             for (let w of workspace.{(_kdeVersion.StartsWith("5") ? "clientList" : "windowList")}()) {{
                 if (w.internalId.toString() == ""{_unityUuid}"") {{
-                    w.frameGeometry = {{ x: {(int)pos.x}, y: {(int)pos.y}, width: w.frameGeometry.width, height: w.frameGeometry.height }};
+                    w.frameGeometry = {{ x: {pos.x}, y: {pos.y}, width: w.frameGeometry.width, height: w.frameGeometry.height }};
                     break;
                 }}
             }}
             done();";
         
-        File.WriteAllText(Path.Combine(_tempPath, scriptName), jsScript);
+        await File.WriteAllTextAsync(Path.Combine(_tempPath, scriptName), jsScript);
         await ExecuteKWinScript(scriptName, true);
     }
     
@@ -363,8 +381,10 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
         int scriptId = await _scripting.loadScriptAsync(scriptPath, Path.GetFileNameWithoutExtension(scriptFileName));
 
         if (scriptId == -1)
-            throw new Exception($"Script {scriptFileName} failed to load. Possibly already loaded?\nTry `qdbus org.kde.KWin /Scripting unloadScript {Path.GetFileNameWithoutExtension(scriptFileName)}`");
-
+        {
+            throw new Exception($"Script {scriptFileName} failed to load.");
+        }
+        
         var instance = _kdeVersion.StartsWith("5")
             ? _connection.CreateProxy<IScriptInstance>("org.kde.KWin", $"/{scriptId}") 
             : _connection.CreateProxy<IScriptInstance>("org.kde.KWin", $"/Scripting/Script{scriptId}");
@@ -388,6 +408,7 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
 
     public void Dispose()
     {
+        _CancellationTokenSource.Cancel();
         _connection?.UnregisterObject(_callbackHandler);
     }
 }
