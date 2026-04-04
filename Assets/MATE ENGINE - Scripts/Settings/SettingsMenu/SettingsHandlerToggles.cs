@@ -227,7 +227,7 @@ public class SettingsHandlerToggles : MonoBehaviour
         data.useLegacyMoveResizeCalls = false;
         data.verboseDiscordRPCLog = false;
         data.windowType = WindowType.Normal;
-        data.forceKWinApi = false;
+        data.useKWinApi = false;
         
         SaveLoadHandler.Instance.SaveToDisk();
         ApplySettings();

@@ -78,7 +78,7 @@ public class LinuxSpecificSettings : MonoBehaviour
         {
             useLegacyMoveResizeCalls = SaveLoadHandler.Instance.data.useLegacyMoveResizeCalls;
             enableAutoMemoryTrim = SaveLoadHandler.Instance.data.enableAutoMemoryTrim;
-            forceKWin = SaveLoadHandler.Instance.data.forceKWinApi;
+            forceKWin = SaveLoadHandler.Instance.data.useKWinApi;
             windowType = SaveLoadHandler.Instance.data.windowType;
             background.SetActive(true);
             if (!show)
@@ -216,7 +216,7 @@ public class LinuxSpecificSettings : MonoBehaviour
         winTypeDesc = CreateDescriptionLabel(stringTable.GetEntry("LSS_WINTYPE_TIP").GetLocalizedString());
         cardBox.PackStart(winTypeDesc, false, false, 0);
         
-        forceKWinToggle = new CheckButton(stringTable.GetEntry("LSS_KWIN").GetLocalizedString()) {Active = SaveLoadHandler.Instance.data.forceKWinApi, UseUnderline = false};
+        forceKWinToggle = new CheckButton(stringTable.GetEntry("LSS_KWIN").GetLocalizedString()) {Active = SaveLoadHandler.Instance.data.useKWinApi, UseUnderline = false};
         ((Label)forceKWinToggle.Child).Xalign = 0.0f;
         ((Label)forceKWinToggle.Child).Yalign = 0.5f;
         cardBox.PackStart(forceKWinToggle, false, false, 0);
@@ -241,7 +241,7 @@ public class LinuxSpecificSettings : MonoBehaviour
             SaveLoadHandler.Instance.data.useLegacyMoveResizeCalls = legacyMoveToggle.Active;
             SaveLoadHandler.Instance.data.enableAutoMemoryTrim = memTrimToggle.Active;
             SaveLoadHandler.Instance.data.windowType = (WindowType)winTypeCombo.Active;
-            SaveLoadHandler.Instance.data.forceKWinApi = forceKWinToggle.Active;
+            SaveLoadHandler.Instance.data.useKWinApi = forceKWinToggle.Active;
             FindFirstObjectByType<SettingsHandlerToggles>().ApplySettings();
             SaveLoadHandler.Instance.SaveToDisk();
         };
@@ -379,7 +379,7 @@ public class LinuxSpecificSettings : MonoBehaviour
         {
             SaveLoadHandler.Instance.data.useLegacyMoveResizeCalls = useLegacyMoveResizeCalls;
             SaveLoadHandler.Instance.data.enableAutoMemoryTrim = enableAutoMemoryTrim;
-            SaveLoadHandler.Instance.data.forceKWinApi = forceKWin;
+            SaveLoadHandler.Instance.data.useKWinApi = forceKWin;
             SaveLoadHandler.Instance.data.windowType = windowType;
 
             FindFirstObjectByType<SettingsHandlerToggles>().ApplySettings();

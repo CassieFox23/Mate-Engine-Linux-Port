@@ -3,16 +3,17 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Tmds.DBus;
-using Unity.VisualScripting.Antlr3.Runtime;
 using UnityEngine;
-using Debug = UnityEngine.Debug;
+using KWinUUID = System.String;
 
 [DBusInterface("org.kde.kwin.Scripting")]
 internal interface IScripting : IDBusObject
 {
-    Task<int> loadScriptAsync(string path, string name); // Note: DBus is case-sensitive. Don't modify the first letter even if Rider suggest you this is supposed to be "LoadScriptAsync"
+    Task<int> loadScriptAsync(string path, string name);
     Task unloadScriptAsync(string name);
 }
 
@@ -22,9 +23,8 @@ internal interface IScriptInstance : IDBusObject
     Task runAsync();
 }
 
-
 [DBusInterface("org.kdotool.callback")]
-public interface IKWinCallback : IDBusObject //Phew! This field must be public to make methods accessible to KWinCallbackReceiverAdapter!
+public interface IKWinCallback : IDBusObject
 {
     Task ResultAsync(string id, string message);
     Task ErrorAsync(string id, string message);
@@ -34,11 +34,7 @@ public interface IKWinCallback : IDBusObject //Phew! This field must be public t
 public class KWinCallbackReceiver : IKWinCallback
 {
     public ObjectPath ObjectPath => "/";
-
-    // Maps ID -> The TaskCompletionSource that returns the final list
     private readonly ConcurrentDictionary<string, TaskCompletionSource<List<string>>> _pendingTasks = new();
-    
-    // Maps ID -> The actual list we are building
     private readonly ConcurrentDictionary<string, List<string>> _results = new();
 
     public void PrepareId(string id, TaskCompletionSource<List<string>> tcs)
@@ -69,312 +65,329 @@ public class KWinCallbackReceiver : IKWinCallback
         if (_pendingTasks.TryRemove(id, out var tcs))
         {
             if (_results.TryRemove(id, out var list))
-                tcs.SetResult(list); // Success! Return the full list
+                tcs.SetResult(list);
         }
         return Task.CompletedTask;
     }
 }
 
-public class KWinManager : Singleton<KWinManager>
+public class KWinClient
+{
+    public IntPtr Hwnd;
+    public KWinUUID Uuid;
+    public int Pid;
+    public RectInt Rect;
+}
+
+public class KWinManager : IDisposable, IWindowManagerImplementation
 {
     private Connection _connection;
     private ConnectionInfo _connectionInfo;
     private KWinCallbackReceiver _callbackHandler;
     private string _kdeVersion;
-    private string _windowUuid;
-
+    private string _unityUuid;
     private string _tempPath;
-
-    public string UnityWindow => _windowUuid;
-
     private IScripting _scripting;
-
     private string _template;
-
+    private bool _dbusReady;
     private bool _initialized;
+    static CancellationTokenSource _CancellationTokenSource;
+    Task _LoopTask;
 
-    private new async void Awake()
+    private readonly List<KWinClient> _cachedClients = new();
+    private Dictionary<IntPtr, string> _ptrToUuidMap = new();
+    private Dictionary<string, IntPtr> _uuidToPtrMap = new();
+    private int _ptrCounter = 1;
+    
+    private Vector2Int _mousePos;
+
+    public bool IsDragging { get; set; }
+    
+    public KWinManager() 
     {
-        try
-        {
-            base.Awake();
-            _tempPath = Application.temporaryCachePath;
-            _kdeVersion = Environment.GetEnvironmentVariable("KDE_SESSION_VERSION");
-            await SetupDBus();
-        }
-        catch (Exception e)
-        {
-            Debug.LogException(e);
-        }
+        _CancellationTokenSource = new CancellationTokenSource();
+        _kdeVersion = Environment.GetEnvironmentVariable("KDE_SESSION_VERSION") ?? "6";
+        _tempPath = Application.temporaryCachePath;
+        _LoopTask = Task.Run(async () => Update(_CancellationTokenSource.Token), _CancellationTokenSource.Token);
     }
 
-    public void Dispose()
-    {
-        if (_cachedScriptPaths.Count > 0)
-        {
-            foreach (var path in _cachedScriptPaths)
-            {
-                File.Delete(path);
-            }
-        }
-        _cachedScriptPaths.Clear();
-        _connection.UnregisterObject(_callbackHandler);
-    }
 
-    private void OnApplicationQuit()
+    public async Task SetupDBus()
     {
-        Dispose();
-    }
-
-    private void OnDestroy()
-    {
-        Dispose();
-    }
-
-    private async Task SetupDBus()
-    {
+        if (_initialized) return;
         _connection = new Connection(Address.Session);
         _connectionInfo = await _connection.ConnectAsync();
-        
         _template = $@"
             function send(msg) {{
-                callDBus(
-                    '{_connectionInfo.LocalName}', 
-                    '/', 
-                    'org.kdotool.callback', 
-                    'Result',
-                    'placeholder',
-                    msg
-                );
+                callDBus('{_connectionInfo.LocalName}', '/', 'org.kdotool.callback', 'Result', 'placeholder', msg);
             }}
             function err(msg) {{
-                callDBus(
-                    '{_connectionInfo.LocalName}', 
-                    '/', 
-                    'org.kdotool.callback', 
-                    'Error',
-                    'placeholder',
-                    msg
-                );
+                callDBus('{_connectionInfo.LocalName}', '/', 'org.kdotool.callback', 'Error', 'placeholder', msg);
             }}
             function done() {{
-                callDBus(
-                    '{_connectionInfo.LocalName}', 
-                    '/', 
-                    'org.kdotool.callback', 
-                    'Finish',
-                    'placeholder'
-                );
+                callDBus('{_connectionInfo.LocalName}', '/', 'org.kdotool.callback', 'Finish', 'placeholder');
             }}";
 
-        // Register our local callback object so KWin can talk to us
         _callbackHandler = new KWinCallbackReceiver();
         await _connection.RegisterObjectAsync(_callbackHandler);
+        
+        await _connection.RegisterServiceAsync("org.kdotool.callback");
+        
         _scripting = _connection.CreateProxy<IScripting>("org.kde.KWin", "/Scripting");
 
+        _dbusReady = true;
+        _unityUuid = GetSelfWindowUuid();
         _initialized = true;
-        
-        _windowUuid = await GetSelfWindowUuid();
     }
-    
-    private async Task<string> GetSelfWindowUuid()
-    {
-        if (!_initialized)
-        {
-            Debug.LogError("Please do not get uuid at the moment.");
-            return string.Empty;
-        }
-        string scriptName = "KWin_GetWinUUID.js";
-        string jsScript = _template.Replace("placeholder", "KWin_GetWinUUID") + $@"
-            for (let win of workspace.{(_kdeVersion.StartsWith("5") ? "clientList" : "windowList")}()) {{
-                if (win.pid == {Process.GetCurrentProcess().Id}) {{
-                    send(win.internalId.toString());
-                    break;
-                }}
-            }}
-            done();";
-        await File.WriteAllTextAsync(Path.Combine(_tempPath, scriptName), jsScript);
-        return (await ExecuteKWinScript(scriptName, true))[0];
-    }
-    
-    public async Task<int> GetWindowPid(string uuid = null)
-    {
-        if (!_initialized)
-        {
-            Debug.LogError("Please do not get window pid at the moment.");
-            return -1;
-        }
-        if (string.IsNullOrEmpty(uuid)) uuid = _windowUuid;
-        
-        string scriptName = "KWin_GetWinPID.js";
-        string jsScript = _template.Replace("placeholder", "KWin_GetWinPID") + $@"
-            for (let win of workspace.{(_kdeVersion.StartsWith("5") ? "clientList" : "windowList")}()) {{
-                if (win.internalId.toString() == ""{uuid}"") {{
-                    send(win.pid.toString());
-                    break;
-                }}
-            }}
-            done();";
-        await File.WriteAllTextAsync(Path.Combine(_tempPath, scriptName), jsScript);
-        var results = await ExecuteKWinScript(scriptName, false);
 
-        int.TryParse(results[0], out var result);
-        return result;
+    async Task Update(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(_unityUuid))
+                {
+                    UpdateWindows();
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+                throw;
+            }
+        }
+    }
+
+    private void UpdateWindows()
+    {
+        _cachedClients.Clear();
+        var activeUuids = new HashSet<string>();
+        var resultLines = Task.Run(GetAllInOne).GetAwaiter().GetResult();
+        foreach (var line in resultLines)
+        {
+            if (!line.StartsWith("Mouse:"))
+            {
+                var prop = line.Split(":");
+                string uuid = prop[0];
+                int.TryParse(prop[1], out var pid);
+                activeUuids.Add(uuid);
+                var parts = prop[2].Split(',');
+                _cachedClients.Add(new KWinClient
+                {
+                    Hwnd = GetPtrFromUuid(uuid), Pid = pid, Uuid = uuid,
+                    Rect = new RectInt(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]),
+                        int.Parse(parts[3]))
+                });
+            }
+            else
+            {
+                var mouse = line.Split(":")[1];
+                int.TryParse(mouse.Split(",")[0], out var x);
+                int.TryParse(mouse.Split(",")[1], out var y);
+                _mousePos = new Vector2Int(x, y);
+            }
+        }
+        var deadUuids = _uuidToPtrMap.Keys.Where(u => !activeUuids.Contains(u)).ToList();
+        foreach (var uuid in deadUuids)
+        {
+            IntPtr ptr = _uuidToPtrMap[uuid];
+            _uuidToPtrMap.Remove(uuid);
+            _ptrToUuidMap.Remove(ptr);
+        }
+    }
+
+    private IntPtr GetPtrFromUuid(string uuid)
+    {
+        if (string.IsNullOrEmpty(uuid)) return IntPtr.Zero;
+    
+        if (_uuidToPtrMap.TryGetValue(uuid, out var existingPtr))
+            return existingPtr;
+    
+        IntPtr newPtr = new IntPtr(_ptrCounter++);
+        _ptrToUuidMap[newPtr] = uuid;
+        _uuidToPtrMap[uuid] = newPtr;
+        return newPtr;
+    }
+
+    private string GetUuidFromPtr(IntPtr ptr)
+    {
+        return _ptrToUuidMap.TryGetValue(ptr, out string uuid) ? uuid : _unityUuid;
     }
     
-    public async Task<List<string>> GetAllWindows()
+    public void SetWindowPosition(Vector2Int position)
     {
-        if (!_initialized)
+        Task.Run(() => MoveWindow(new Vector2(position.x, position.y))).GetAwaiter().GetResult();
+    }
+
+    public void SetWindowSize(Vector2Int size)
+    {
+        string scriptName = "KWin_ResizeWin.js";
+        string jsScript = _template.Replace("placeholder", "KWin_ResizeWin") + $@"
+            for (let w of workspace.{(_kdeVersion.StartsWith("5") ? "clientList" : "windowList")}()) {{
+                if (w.internalId.toString() == ""{_unityUuid}"") {{
+                    w.frameGeometry = {{ x: w.frameGeometry.x, y: w.frameGeometry.y, width: {size.x}, height: {size.y} }};
+                    break;
+                }}
+            }}
+            done();";
+        
+        File.WriteAllText(Path.Combine(_tempPath, scriptName), jsScript);
+        Task.Run(() => ExecuteKWinScript(scriptName, true).GetAwaiter().GetResult());
+    }
+
+    public Vector2Int GetWindowPosition()
+    {
+        RectInt rect = Task.Run(() => GetWindowGeometry(_unityUuid)).GetAwaiter().GetResult();
+        return new Vector2Int(rect.x, rect.y);
+    }
+
+    public int GetWindowPid(IntPtr window)
+    {
+        foreach (var client in _cachedClients.Where(client => client.Hwnd == window))
         {
-            Debug.LogError("Please do not get all windows at the moment.");
-            return new List<string>();
+            return client.Pid;
         }
+        return -1;
+    }
+
+    public Vector2Int GetMousePosition()
+    {
+        return _mousePos;
+    }
+
+    public List<IntPtr> FindWindowsByPid(int targetPid)
+    {
+        return _cachedClients.Where(client => client.Pid == targetPid).Select(client => client.Hwnd).ToList();
+    }
+
+    public List<IntPtr> GetAllVisibleWindows()
+    {
+        return _cachedClients.Select(client => client.Hwnd).ToList();
+    }
+
+    public Vector2Int GetWindowSize(IntPtr window)
+    {
+        RectInt rect = Task.Run(() => GetWindowGeometry(GetUuidFromPtr(window))).GetAwaiter().GetResult();
+        return new Vector2Int(rect.width, rect.height);
+    }
+
+    public bool GetWindowRect(IntPtr window, out RectInt rectInt)
+    {
+        rectInt = Task.Run(() => GetWindowGeometry(GetUuidFromPtr(window))).GetAwaiter().GetResult();
+        return rectInt != RectInt.zero;
+    }
+
+    public Vector2Int GetTotalDisplaySize()
+    {
+        string scriptName = "KWin_GetWorkspaceSize.js";
+        string jsScript = _template.Replace("placeholder", "KWin_GetWorkspaceSize") + $@"
+             send(workspace.workspaceSize.width + ',' + workspace.workspaceSize.height);
+             done();";
+        
+        File.WriteAllText(Path.Combine(_tempPath, scriptName), jsScript);
+    
+        var result = Task.Run(() => ExecuteKWinScript(scriptName, true)).GetAwaiter().GetResult()[0].Split(',');
+        return new Vector2Int(int.Parse(result[0]), int.Parse(result[1]));
+    }
+    
+    public bool IsWindowVisible(IntPtr window) => true; 
+    public bool IsWindowFullscreen(IntPtr window) => false;
+    public bool IsWindowMaximized(IntPtr window) => false;
+    public List<IntPtr> GetClientStackingList() => GetAllVisibleWindows();
+    public List<(IntPtr Id, RectInt Rect)> GetAllMonitors() => new();
+    public bool IsDesktop(IntPtr window) => false;
+    public bool IsDock(IntPtr window) => false;
+    public string GetClassName(IntPtr window) => "KWinWindow";
+    public void SetTopmost(bool topmost) { }
+    public void HideFromTaskbar(bool reallyHide) { }
+    public void SetWindowBorderless() { }
+    public void SetWindowType(WindowType type) { }
+    public void SetXUnityWindow(IntPtr unityWindow) { }
+    public void SetSnapedWindow(IntPtr window) { }
+
+    private KWinUUID GetSelfWindowUuid()
+    {
+        if (_cachedClients.Count == 0)
+            UpdateWindows();
+        return _cachedClients.Find(client => client.Pid == Process.GetCurrentProcess().Id).Uuid;
+    }
+
+    private async Task<List<string>> GetAllInOne()
+    {
+        if (!_dbusReady) return new List<string>();
         string scriptName = "KWin_GetAllWin.js";
-        string scriptPath = Path.Combine(_tempPath, scriptName);
         string jsScript = _template.Replace("placeholder", "KWin_GetAllWin") + $@"
             for (let win of workspace.{(_kdeVersion.StartsWith("5") ? "clientList" : "windowList")}()) {{
-                send(win.internalId.toString());
+                send(win.internalId.toString() + ':' + win.pid.toString() + ':' + win.frameGeometry.x + ',' + win.frameGeometry.y + ',' + win.frameGeometry.width + ',' + win.frameGeometry.height);
             }}
+            send('Mouse:' + workspace.cursorPos.x + ',' + workspace.cursorPos.y)
             done();";
         
-        if (!File.Exists(scriptPath)) await File.WriteAllTextAsync(scriptPath, jsScript);
-        return await ExecuteKWinScript(scriptName, false);
+        if (!File.Exists(Path.Combine(_tempPath, scriptName))) File.WriteAllText(Path.Combine(_tempPath, scriptName), jsScript);
+        return await ExecuteKWinScript(scriptName, true);
     }
 
-    public async Task<RectInt> GetWindowGeometry(string uuid = null)
+    public RectInt GetWindowGeometry(string uuid = null)
     {
-        if (!_initialized)
-        {
-            Debug.LogError("Please do not get window geometry at the moment.");
-            return RectInt.zero;
-        }
-        if (string.IsNullOrEmpty(uuid)) uuid = _windowUuid;
-        
-        string scriptName = $"KWin_GetGeometryFor{uuid.Replace("-", "_")}.js";
-        string scriptPath = Path.Combine(_tempPath, scriptName);
-        string jsScript = _template.Replace("placeholder", $"KWin_GetGeometryFor{uuid.Replace("-", "_")}") + $@"
-
-            for (let w of workspace.{(_kdeVersion.StartsWith("5") ? "clientList" : "windowList")}()) {{
-                if (w.internalId.toString() == ""{uuid}"") {{
-                    send(w.frameGeometry.x + ',' + w.frameGeometry.y);
-                    send(w.frameGeometry.width + 'x' + w.frameGeometry.height);
-                    break;
-                }}
-            }}
-            done();";
-
-        if (!File.Exists(scriptPath)) await File.WriteAllTextAsync(scriptPath, jsScript);
-
-        var output = await ExecuteKWinScript(scriptName, true);
-
-        var geo = new RectInt();
-        var pos = output[0].Split(',');
-        var size = output[1].Split('x');
-
-        geo.x = int.Parse(pos[0]);
-        geo.y = int.Parse(pos[1]);
-        geo.width = int.Parse(size[0]);
-        geo.height = int.Parse(size[1]);
-
-        return geo;
+        if (!_initialized) return RectInt.zero;
+        return _cachedClients.Find(client => client.Uuid == uuid).Rect;
     }
-    
-    public async Task<Vector2Int> GetCursorPos()
-    {
-        if (!_initialized)
-        {
-            Debug.LogError("Please do not get cursor position at the moment.");
-            return new Vector2Int();
-        }
-        string scriptName = "KWin_GetCursorPos.js";
-        string scriptPath = Path.Combine(_tempPath, scriptName);
-        string jsScript = _template.Replace("placeholder", "KWin_GetCursorPos") + $@"
-                send(workspace.cursorPos.x + ',' + workspace.cursorPos.y);
-                done();";
-        
-        if (!File.Exists(scriptPath)) await File.WriteAllTextAsync(scriptPath, jsScript);
-        var output = await ExecuteKWinScript(scriptName, false);
 
-        var pos = output[0].Split(',');
-        return new Vector2Int(int.Parse(pos[0]), int.Parse(pos[1]));
-    }
-    
     public async Task MoveWindow(Vector2 pos)
     {
-        if (!_initialized)
-        {
-            Debug.LogError("Please do not move at the moment.");
-            return;
-        }
+        if (!_initialized) return;
         string scriptName = $"KWin_MoveWin.js"; 
-        string scriptPath = Path.Combine(_tempPath, scriptName);
-
-        string jsScript = $@"
+        string jsScript = _template.Replace("placeholder", "KWin_MoveWin") + $@"
             for (let w of workspace.{(_kdeVersion.StartsWith("5") ? "clientList" : "windowList")}()) {{
-                if (w.internalId.toString() == ""{_windowUuid}"") {{
-                    w.clientStartUserMovedResized(w);
-                    w.geometry.x = {(int)pos.x};
-                    w.geometry.y = {(int)pos.y};
-                    w.clientFinishUserMovedResized(w);
+                if (w.internalId.toString() == ""{_unityUuid}"") {{
+                    w.frameGeometry = {{ x: {(int)pos.x}, y: {(int)pos.y}, width: w.frameGeometry.width, height: w.frameGeometry.height }};
                     break;
                 }}
-            }}";
+            }}
+            done();";
         
-        await File.WriteAllTextAsync(scriptPath, jsScript);
-
-        await ExecuteKWinScript(scriptName, false);
+        File.WriteAllText(Path.Combine(_tempPath, scriptName), jsScript);
+        await ExecuteKWinScript(scriptName, true);
     }
-
-    private readonly List<string> _cachedScriptPaths = new();
     
     private async Task<List<string>> ExecuteKWinScript(string scriptFileName, bool deleteOnFinishExecution)
     {
-        if (!_initialized)
-        {
-            Debug.LogError($"Please do not execute {scriptFileName} at the moment.");
-            return new List<string>();
-        }
+        if (!_dbusReady) return new List<string>();
         
         var tcs = new TaskCompletionSource<List<string>>();
         _callbackHandler.PrepareId(Path.GetFileNameWithoutExtension(scriptFileName), tcs);
         
         string scriptPath = Path.Combine(_tempPath, scriptFileName);
-
-        if (!File.Exists(scriptPath))
-            throw new FileNotFoundException($"Attempting to execute script {scriptFileName} while it's not found under {Path.GetDirectoryName(scriptPath)}.");
         
         int scriptId = await _scripting.loadScriptAsync(scriptPath, Path.GetFileNameWithoutExtension(scriptFileName));
 
         if (scriptId == -1)
-        {
-            throw new Exception($"loadScript returned -1 for script {Path.GetFileNameWithoutExtension(scriptFileName)}. Possibly already loaded?");
-        }
+            throw new Exception($"Script {scriptFileName} failed to load. Possibly already loaded?\nTry `qdbus org.kde.KWin /Scripting unloadScript {Path.GetFileNameWithoutExtension(scriptFileName)}`");
 
-        var instance = _kdeVersion == "5" ? _connection.CreateProxy<IScriptInstance>("org.kde.KWin", $"/{scriptId}") : _connection.CreateProxy<IScriptInstance>("org.kde.KWin", $"/Scripting/Script{scriptId}");
+        var instance = _kdeVersion.StartsWith("5")
+            ? _connection.CreateProxy<IScriptInstance>("org.kde.KWin", $"/{scriptId}") 
+            : _connection.CreateProxy<IScriptInstance>("org.kde.KWin", $"/Scripting/Script{scriptId}");
 
         try
         {
             await instance.runAsync();
-
-            var timeout = Task.Delay(1000);
+            var timeout = Task.Delay(2000);
             var completedTask = await Task.WhenAny(tcs.Task, timeout);
             
-            if (completedTask == timeout)
-                throw new TimeoutException($"Script {scriptFileName} timed out waiting for FinishAsync.");
+            if (completedTask == timeout) throw new TimeoutException($"Script {scriptFileName} timed out.");
 
             return await tcs.Task;
         }
         finally
         {
             await _scripting.unloadScriptAsync(Path.GetFileNameWithoutExtension(scriptFileName));
-            if (!deleteOnFinishExecution)
-            {
-                _cachedScriptPaths.Add(scriptPath);
-            }
-            else if (File.Exists(scriptPath))
-            {
-                File.Delete(scriptPath);
-            }
+            if (deleteOnFinishExecution && File.Exists(scriptPath)) File.Delete(scriptPath);
         }
+    }
+
+    public void Dispose()
+    {
+        _connection?.UnregisterObject(_callbackHandler);
     }
 }

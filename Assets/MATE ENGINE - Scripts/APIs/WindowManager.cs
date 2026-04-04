@@ -11,10 +11,6 @@ using UnityEngine.EventSystems;
 using Debug = UnityEngine.Debug;
 using Unity.Burst;
 using Unity.Collections;
-using UnityEngine.SceneManagement;
-using System.Runtime.Remoting.Messaging;
-using System.Threading.Tasks;
-using Unity.VisualScripting;
 
 public enum DesktopEnvironments
 {
@@ -55,31 +51,46 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     #region Unity Events
 
-    private void OnEnable()
+    private async void OnEnable()
     {
-        Instance = this;
-        if (Enum.TryParse(Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP"), true, out _currentDesktopEnv))
+        try
         {
-            switch(_currentDesktopEnv)
+            Instance = this;
+            if (Enum.TryParse(Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP"), true, out _currentDesktopEnv))
             {
-                case DesktopEnvironments.Hyprland:
-                    _windowManagerImplementation = new HyprlandManager();
-                    break;
+                switch(_currentDesktopEnv)
+                {
+                    case DesktopEnvironments.Hyprland:
+                        _windowManagerImplementation = new HyprlandManager();
+                        break;
+                    case DesktopEnvironments.Kde:
+                        if (SaveLoadHandler.Instance.data.useKWinApi)
+                        {
+                            var km = new KWinManager();
+                            await km.SetupDBus();
+                            _windowManagerImplementation = km;
+                        }
+                        break;
+                }
+                _windowManagerImplementation?.SetXUnityWindow(_unityWindow);
+                return;
             }
-            _windowManagerImplementation?.SetXUnityWindow(_unityWindow);
-            return;
-        }
-        if (!Enum.TryParse(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), true, out _currentSessionType))
-        {
-            _currentSessionType = SessionTypes.Unknown;
-        }
+            if (!Enum.TryParse(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), true, out _currentSessionType))
+            {
+                _currentSessionType = SessionTypes.Unknown;
+            }
 
-        _currentDesktopEnv = _currentSessionType switch
+            _currentDesktopEnv = _currentSessionType switch
+            {
+                SessionTypes.X11 => DesktopEnvironments.OtherX11,
+                SessionTypes.Wayland => DesktopEnvironments.OtherWayland,
+                _ => DesktopEnvironments.Unknown
+            };
+        }
+        catch (Exception e)
         {
-            SessionTypes.X11 => DesktopEnvironments.OtherX11,
-            SessionTypes.Wayland => DesktopEnvironments.OtherWayland,
-            _ => DesktopEnvironments.Unknown
-        };
+            ShowError(e.ToString());
+        }
     }
 
     IWindowManagerImplementation _windowManagerImplementation = null;
@@ -482,11 +493,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public void SetWindowPosition(Vector2Int position)
     {
-        if (_currentDesktopEnv == DesktopEnvironments.Kde && _currentSessionType == SessionTypes.Wayland)
-        {
-            Singleton<KWinManager>.Instance.MoveWindow(position);
-            return;
-        }
         if (SaveLoadHandler.Instance.data.useLegacyMoveResizeCalls)
         { 
             SetWindowPositionLegacy(position);
@@ -741,10 +747,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     {
         if (_windowManagerImplementation != null)
             return _windowManagerImplementation.GetMousePosition();
-        if (SaveLoadHandler.Instance.data.forceKWinApi && _currentDesktopEnv == DesktopEnvironments.Kde)
-        {
-            return Task.Run(Singleton<KWinManager>.Instance.GetCursorPos).GetAwaiter().GetResult();
-        }
         // Query mouse position
         int rootX = 0, rootY = 0;
         IntPtr rootReturn = IntPtr.Zero, childReturn = IntPtr.Zero;
@@ -903,17 +905,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         return result;
     }
 
-    public int GetWindowPid(string kWinUuid)
-    {
-        if (_currentDesktopEnv == DesktopEnvironments.Kde)
-        {
-            return Task.Run(() => Singleton<KWinManager>.Instance.GetWindowPid(kWinUuid)).GetAwaiter().GetResult();
-        }
-        
-        ShowError("The argument is passed as a string which is supposed to be a UUID of a window managed by KWin.\nHowever KWin/KDE is not detected.");
-        return -1;
-    }
-
     public int GetWindowPid(IntPtr window)
     {
         if(_windowManagerImplementation != null)
@@ -1007,18 +998,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     public bool GetWindowRect(out RectInt rect)
     {
         return GetWindowRect(_unityWindow, out rect);
-    }
-
-    public void GetWindowRect(string kWinUuid, out RectInt rect)
-    {
-        if (_currentDesktopEnv == DesktopEnvironments.Kde)
-        {
-            rect = Task.Run(() => Singleton<KWinManager>.Instance.GetWindowGeometry(kWinUuid)).GetAwaiter().GetResult();
-            return;
-        }
-
-        ShowError("The first argument is passed as a string which is supposed to be a UUID of a window managed by KWin.\nHowever KWin/KDE is not detected.");
-        rect = RectInt.zero;
     }
 
     public bool GetWindowRect(IntPtr window, out RectInt rect)
@@ -1349,16 +1328,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             return XGetSelectionOwner(_display, selectionAtom) != 0;
         }
         return false;
-    }
-
-    public List<string> GetClientStackingListKWin()
-    {
-        if (_currentDesktopEnv == DesktopEnvironments.Kde)
-        {
-            return Task.Run(Singleton<KWinManager>.Instance.GetAllWindows).GetAwaiter().GetResult();
-        }
-        ShowError("KWin/KDE is not detected.");
-        return new List<string>();
     }
     
     public List<IntPtr> GetClientStackingList()
@@ -2380,9 +2349,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     [DllImport(LibX11)]
     private static extern int XNextEvent(IntPtr display, ref XEvent ev);
-
-    [DllImport(LibX11)]
-    private static extern int XPending(IntPtr display);
         
     [DllImport(LibXRandR)]
     private static extern int XRRQueryExtension(IntPtr display, out IntPtr eventBase, out IntPtr errorBase);
