@@ -18,10 +18,8 @@ body:
       label: Dependencies
       description: Confirm you've set up your Linux environment correctly.
       options:
-        - label: I already installed all of the libraries listed out in README.md, including `libayatana-appindicator3-1`
-        - label: I launch MateEngine with `launch.sh` script
+        - label: I already installed all of the libraries listed out in README.md
         - label: I already enabled composition in compositor / window manager settings
-        - label: I am not using tiling window managers like i3 or Hyprland
     validations:
       required: true
 
