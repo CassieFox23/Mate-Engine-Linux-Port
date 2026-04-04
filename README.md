@@ -19,7 +19,9 @@ Tested on Ubuntu 24.04 LTS.
 ![](https://raw.githubusercontent.com/Marksonthegamer/Mate-Engine-Linux-Port/refs/heads/main/Screenshot.png)
 
 ### Installation
-Simply grab a prebuilt one in [Releases](https://github.com/Marksonthegamer/Mate-Engine-Linux-Port/releases/) page and decompress it. Then, run the `launch.sh` script in the output directory (This script is necessary for window transparency. For KDE, you also need to **disable "Allow applications to block compositing"** in `systemsettings`).
+Simply grab a prebuilt one in [Releases](https://github.com/Marksonthegamer/Mate-Engine-Linux-Port/releases/) page and decompress it. Then, run the `install.sh` script in the output directory to install MateEngine. Finally, find Mate Engine from your application launcher and run or simply enter `mateengine` command in Terminal.
+
+Note that if you use KDE and find there's black background in MateEngine, you also need to **disable "Allow applications to block compositing"** in `systemsettings`).
 
 Arch users may simply use the following command to install:
 ```bash
@@ -107,7 +109,9 @@ This project lacks further testing and updates. Feel free to make PRs to contrib
 ![](https://raw.githubusercontent.com/Marksonthegamer/Mate-Engine-Linux-Port/refs/heads/main/Screenshot.png)
 
 ### 安装
-在[Releases](https://github.com/Marksonthegamer/Mate-Engine-Linux-Port/releases/)页面获取预构建版本并解压。必须运行输出目录中的`launch.sh`，否则 MateEngne 将缺少透明窗口背景（对于 KDE Plasma 桌面环境，你还需要在 KDE 系统设置中禁用“允许应用程序阻止显示特效合成”）。
+在[Releases](https://github.com/Marksonthegamer/Mate-Engine-Linux-Port/releases/)页面获取预构建版本并解压。然后，运行输出目录中的`install.sh`以安装 MateEngine。最后，在应用程序启动器中找到 Mate Engine 并运行，或者直接在终端内运行命令`mateengine`。
+
+注意，如果你 KDE Plasma 桌面环境且遇到了黑色背景，你还需要在 KDE 系统设置中禁用“允许应用程序阻止显示特效合成”）。
 
 Arch Linux 用户可以直接使用以下命令安装：
 ```bash
