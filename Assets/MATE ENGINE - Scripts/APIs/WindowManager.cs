@@ -647,7 +647,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             }
 
             var monRect = new RectInt(crtcInfo.x, crtcInfo.y, (int)crtcInfo.width, (int)crtcInfo.height);
-            _monitors.Add(outInfoHandle, monRect);
+            _monitors[outInfoHandle] = monRect;
 
             XRRFreeCrtcInfo(crtcInfoHandle);
             XRRFreeOutputInfo(outInfoHandle);
