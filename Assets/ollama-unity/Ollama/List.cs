@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using UnityEngine;
 
 namespace ollama
 {
@@ -12,6 +13,11 @@ namespace ollama
         public static async Task<Model[]> List()
         {
             var response = await GetRequest<Response.List>(Endpoints.LIST);
+            if (response == null)
+            {
+                Debug.LogWarning("Ollama is not installed.");
+                return null;
+            }
             return response.models;
         }
     }

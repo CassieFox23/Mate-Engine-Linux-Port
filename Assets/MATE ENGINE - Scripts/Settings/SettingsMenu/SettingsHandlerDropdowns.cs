@@ -48,7 +48,7 @@ public class SettingsHandlerDropdowns : MonoBehaviour
         {
             ollamaModelDropdown.ClearOptions();
             var models = await Ollama.List();
-            if (models.Length == 0)
+            if (models == null || models.Length == 0)
             {
                 Debug.LogWarning("No Ollama models found.");
                 ollamaModelDropdown.AddOptions(new List<string> { "N/A" });

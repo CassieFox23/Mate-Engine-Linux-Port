@@ -81,6 +81,12 @@ public class KWinClient
 
 public class KWinManager : IDisposable, IWindowManagerImplementation
 {
+    private enum ScriptDeletionMode
+    {
+        DeleteOnFinishExecution,
+        DeleteOnApplicationQuit
+    }
+    
     private Connection _connection;
     private ConnectionInfo _connectionInfo;
     private KWinCallbackReceiver _callbackHandler;
@@ -103,18 +109,18 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
 
     public bool IsDragging { get; set; }
     
-    public KWinManager() 
+    public KWinManager(Connection connection) 
     {
         _CancellationTokenSource = new CancellationTokenSource();
         _kdeVersion = Environment.GetEnvironmentVariable("KDE_SESSION_VERSION") ?? "6";
         _tempPath = Application.temporaryCachePath;
         _LoopTask = Task.Run(() => Update(_CancellationTokenSource.Token), _CancellationTokenSource.Token);
+        _connection = connection;
     }
     
     public async Task SetupDBus()
     {
         if (_initialized) return;
-        _connection = new Connection(Address.Session);
         _connectionInfo = await _connection.ConnectAsync();
         _template = $@"
             function send(msg) {{
@@ -190,9 +196,8 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
                 cachedClients.Add(new KWinClient
                 {
                     Hwnd = GetPtrFromUuid(uuid), Pid = pid, Uuid = uuid,
-                    Rect = new RectInt(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]),
-                        int.Parse(parts[3]))
-                });
+                    Rect = new RectInt(Mathf.RoundToInt(float.Parse(parts[0])), Mathf.RoundToInt(float.Parse(parts[1])), int.Parse(parts[2]), int.Parse(parts[3]))
+                }); // You may wonder why I use float instead of int here - that's because KWin 6 sometimes return float coordinates!
             }
         }
         var deadUuids = _uuidToPtrMap.Keys.Where(u => !activeUuids.Contains(u)).ToList();
@@ -243,7 +248,7 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
             done();";
         
         File.WriteAllText(Path.Combine(_tempPath, scriptName), jsScript);
-        Task.Run(() => ExecuteKWinScript(scriptName, true).GetAwaiter().GetResult());
+        Task.Run(() => ExecuteKWinScript(scriptName, ScriptDeletionMode.DeleteOnFinishExecution).GetAwaiter().GetResult());
     }
 
     public Vector2Int GetWindowPosition()
@@ -297,7 +302,7 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
         
         File.WriteAllText(Path.Combine(_tempPath, scriptName), jsScript);
     
-        var result = Task.Run(() => ExecuteKWinScript(scriptName, true)).GetAwaiter().GetResult()[0].Split(',');
+        var result = Task.Run(() => ExecuteKWinScript(scriptName, ScriptDeletionMode.DeleteOnFinishExecution)).GetAwaiter().GetResult()[0].Split(',');
         return new Vector2Int(int.Parse(result[0]), int.Parse(result[1]));
     }
     
@@ -336,7 +341,7 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
             done();";
         
         if (!File.Exists(Path.Combine(_tempPath, scriptName))) await File.WriteAllTextAsync(Path.Combine(_tempPath, scriptName), jsScript);
-        return await ExecuteKWinScript(scriptName, false);
+        return await ExecuteKWinScript(scriptName, ScriptDeletionMode.DeleteOnApplicationQuit);
     }
 
     private RectInt GetWindowGeometry(string uuid)
@@ -366,10 +371,10 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
             done();";
         
         await File.WriteAllTextAsync(Path.Combine(_tempPath, scriptName), jsScript);
-        await ExecuteKWinScript(scriptName, true);
+        await ExecuteKWinScript(scriptName, ScriptDeletionMode.DeleteOnFinishExecution);
     }
     
-    private async Task<List<string>> ExecuteKWinScript(string scriptFileName, bool deleteOnFinishExecution)
+    private async Task<List<string>> ExecuteKWinScript(string scriptFileName, ScriptDeletionMode deletionMode)
     {
         if (!_dbusReady) return new List<string>();
         
@@ -402,12 +407,20 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
         finally
         {
             await _scripting.unloadScriptAsync(Path.GetFileNameWithoutExtension(scriptFileName));
-            if (deleteOnFinishExecution && File.Exists(scriptPath)) File.Delete(scriptPath);
+            if (deletionMode == ScriptDeletionMode.DeleteOnFinishExecution && File.Exists(scriptPath)) File.Delete(scriptPath);
+            if (deletionMode == ScriptDeletionMode.DeleteOnApplicationQuit && !_pendingDeletions.Contains(scriptPath)) _pendingDeletions.Add(scriptPath);
         }
     }
 
+    private readonly List<string> _pendingDeletions = new();
+
     public void Dispose()
     {
+        foreach (var script in _pendingDeletions.Where(File.Exists))
+        {
+            File.Delete(script);
+        }
+
         _CancellationTokenSource.Cancel();
         _connection?.UnregisterObject(_callbackHandler);
     }

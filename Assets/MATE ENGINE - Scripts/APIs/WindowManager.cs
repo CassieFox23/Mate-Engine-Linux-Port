@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Tmds.DBus;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using Debug = UnityEngine.Debug;
@@ -53,6 +54,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     private async void OnEnable()
     {
+        Tmds.DBus.Connection connection = new(Address.Session);
         try
         {
             Instance = this;
@@ -66,18 +68,26 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                     case DesktopEnvironments.Kde:
                         if (SaveLoadHandler.Instance.data.useKWinApi)
                         {
-                            var km = new KWinManager();
+                            var km = new KWinManager(connection);
                             await km.SetupDBus();
                             _windowManagerImplementation = km;
                         }
                         break;
                 }
                 _windowManagerImplementation?.SetXUnityWindow(_unityWindow);
-                return;
             }
             if (!Enum.TryParse(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), true, out _currentSessionType))
             {
                 _currentSessionType = SessionTypes.Unknown;
+            }
+
+            if (_currentSessionType == SessionTypes.Wayland)
+            {
+                Singleton<DBusNotificationHelper>.Instance.Connection = connection;
+                await Singleton<DBusNotificationHelper>.Instance.Send("Wayland is not fully supported by MateEngine",
+                    "Although Wayland improves security, its fundamental design choices prevent MateEngine (and other X11 applications) from getting window information." +
+                    "Thus, features like window-sitting could hardly be implemented under various Wayland-based DEs. Please use X11 DEs to enjoy the best of MateEngine.",
+                    "wayland", null, 30000);
             }
 
             _currentDesktopEnv = _currentSessionType switch
