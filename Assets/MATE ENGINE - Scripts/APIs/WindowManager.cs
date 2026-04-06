@@ -148,6 +148,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         XSelectInput(_display, _unityWindow, StructureNotifyMask | EnterWindowMask | LeaveWindowMask | PropertyChangeMask);
         EnableClickThroughTransparency();
         LoadCursors();
+        print($"{GetType()} initialization completed.");
     }
 
     private void OnApplicationQuit() => Dispose();
@@ -600,6 +601,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     {
         _monitors = new();
         _monitors.Clear();
+        if (SaveLoadHandler.Instance.safeMode)
+        {
+            _monitors.Add(IntPtr.Zero, new RectInt(0, 0, Screen.currentResolution.width, Screen.currentResolution.height));
+            return;
+        }
         if(_windowManagerImplementation != null && _currentDesktopEnv != DesktopEnvironments.Kde)
         {
             foreach(var m in _windowManagerImplementation.GetAllMonitors())
@@ -815,6 +821,10 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         
     public bool IsAnyKeyDown()
     {
+        if (SaveLoadHandler.Instance.safeMode)
+        {
+            return Input.anyKeyDown;
+        }
         if (_display == IntPtr.Zero) return false;
 
         byte[] keymap = new byte[32];
@@ -1375,7 +1385,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         
     private void EnableClickThroughTransparency()
     {
-        if (_running || !transparentInputEnabled) return;
+        if (_running || !transparentInputEnabled || SaveLoadHandler.Instance.safeMode) return;
         SetupTransparentInput();
         _running = true;
         _x11EventThread = new Thread(ApplyShaping)
