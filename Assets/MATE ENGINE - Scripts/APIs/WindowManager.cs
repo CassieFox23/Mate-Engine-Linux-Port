@@ -54,10 +54,13 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     private async void OnEnable()
     {
-        Tmds.DBus.Connection connection = new(Address.Session);
         try
         {
             Instance = this;
+            
+            var connection = new Tmds.DBus.Connection(Address.Session);
+            var connectionInfo = await connection.ConnectAsync();
+            
             if (Enum.TryParse(Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP"), true, out _currentDesktopEnv))
             {
                 switch(_currentDesktopEnv)
@@ -68,7 +71,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                     case DesktopEnvironments.Kde:
                         if (SaveLoadHandler.Instance.data.useKWinApi)
                         {
-                            var km = new KWinManager(connection);
+                            var km = new KWinManager(connection, connectionInfo);
                             await km.SetupDBus();
                             _windowManagerImplementation = km;
                         }
@@ -441,6 +444,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         {
 #if UNITY_EDITOR
             SetTopmost(false);
+            SetTransientFor(IntPtr.Zero, true);
 #endif
 #if !UNITY_EDITOR
             if (_damage != IntPtr.Zero)
@@ -579,9 +583,9 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         SetWindowPosition(absolutePos);
     }
     
-    public void SetTransientFor(IntPtr parentWindow)
+    public void SetTransientFor(IntPtr parentWindow, bool force = false)
     {
-        if (_display == IntPtr.Zero || _unityWindow == IntPtr.Zero || _closing) return;
+        if (_display == IntPtr.Zero || _unityWindow == IntPtr.Zero || _closing & !force) return;
         if(_windowManagerImplementation != null)
         {
             _windowManagerImplementation.SetSnapedWindow(parentWindow);

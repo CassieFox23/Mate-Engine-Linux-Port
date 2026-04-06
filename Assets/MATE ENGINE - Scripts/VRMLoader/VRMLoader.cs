@@ -406,6 +406,7 @@ public class VRMLoader : MonoBehaviour
             var type = templateComp.GetType();
             if (targetModel.GetComponent(type) != null) continue;
             var newComp = targetModel.AddComponent(type);
+            print($"Copying {templateComp.GetType()} from {templateObj.name}");
             CopyComponentValues(templateComp, newComp);
 
             if (animator != null)

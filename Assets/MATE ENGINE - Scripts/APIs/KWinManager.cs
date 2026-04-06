@@ -109,19 +109,19 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
 
     public bool IsDragging { get; set; }
     
-    public KWinManager(Connection connection) 
+    public KWinManager(Connection connection, ConnectionInfo connectionInfo) 
     {
         _CancellationTokenSource = new CancellationTokenSource();
         _kdeVersion = Environment.GetEnvironmentVariable("KDE_SESSION_VERSION") ?? "6";
         _tempPath = Application.temporaryCachePath;
         _LoopTask = Task.Run(() => Update(_CancellationTokenSource.Token), _CancellationTokenSource.Token);
         _connection = connection;
+        _connectionInfo = connectionInfo;
     }
     
     public async Task SetupDBus()
     {
         if (_initialized) return;
-        _connectionInfo = await _connection.ConnectAsync();
         _template = $@"
             function send(msg) {{
                 callDBus('{_connectionInfo.LocalName}', '/', 'org.kdotool.callback', 'Result', 'placeholder', msg);

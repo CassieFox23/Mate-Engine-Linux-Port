@@ -23,7 +23,7 @@ public class AvatarWindowHandler : MonoBehaviour
     Vector2 _guardCenterDesktop;
 
     [Header("Snap Guard Zone")]
-    public bool useGuardZone = true;
+    public bool useGuardZone;
     public float probeGuardPx = 240f;
     public Color probeGuardGizmoColor = Color.cyan;
 

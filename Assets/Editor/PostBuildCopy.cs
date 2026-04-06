@@ -11,6 +11,7 @@ public abstract class PostBuildCopy
         string buildDir = Path.GetDirectoryName(pathToBuiltProject);
 
         string launcherScript = Path.Combine(Directory.GetCurrentDirectory(), "launch.sh");
+        string installerScript = Path.Combine(Directory.GetCurrentDirectory(), "install.sh");
         
         if (buildDir != null)
         {
@@ -24,6 +25,18 @@ public abstract class PostBuildCopy
             else
             {
                 Debug.LogError("Looks like you forgot to put a extra but important script to launch the game!");
+            }
+            
+            scriptDestination = Path.Combine(buildDir, "..", "install.sh");
+            
+            if (File.Exists(installerScript))
+            {
+                File.Copy(installerScript, scriptDestination, true);
+                Debug.Log("Copied install.sh outside the build folder.");
+            }
+            else
+            {
+                Debug.LogError("Looks like you forgot to put a extra but important script to install the game!");
             }
         }
     }

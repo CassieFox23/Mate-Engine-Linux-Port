@@ -46,18 +46,22 @@ public class GtkX11Helper
         Instance.DummyParent.SkipTaskbarHint = true;
         Instance.DummyParent.SkipPagerHint = true;
         Instance.DummyParent.Decorated = false;
-        Instance.DummyParent.Window.Reparent(Instance.gdkWindow, 0, 0);
+        if (Instance.gdkWindow != null)
+        {
+            Instance.DummyParent.Window.Reparent(Instance.gdkWindow, 0, 0);
+            return;
+        }
+        Debug.LogError("Cannot SetParent for window.");
     }
 
     private static Window ForeignNewForDisplay(IntPtr x11WindowXid)
     {
-        var display = Display.Default;
-        IntPtr gdkDisplayPtr = display.Handle;
+        if (x11WindowXid == IntPtr.Zero)
+            throw new ArgumentException("XID cannot be zero");
         
-        IntPtr foreign = gdk_x11_window_foreign_new_for_display(gdkDisplayPtr, x11WindowXid);
-        if (foreign == IntPtr.Zero)
-            throw new Exception("Failed to create foreign GdkWindow");
-
-        return new Window(foreign);
+        IntPtr foreign = gdk_x11_window_foreign_new_for_display(Display.Default.Handle, x11WindowXid);
+        if (foreign != IntPtr.Zero) return new Window(foreign);
+        Debug.LogError($"Failed to create foreign GdkWindow for XID 0x{x11WindowXid:X}.");
+        return null;
     }
 }

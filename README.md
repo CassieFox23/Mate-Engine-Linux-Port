@@ -25,7 +25,7 @@ Note that if you use KDE and find there's black background in MateEngine, you al
 
 Arch users may simply use the following command to install:
 ```bash
-sudo yay -S mateengine
+yay -S mateengine
 ```
 
 ### Requirements
@@ -115,7 +115,7 @@ This project lacks further testing and updates. Feel free to make PRs to contrib
 
 Arch Linux 用户可以直接使用以下命令安装：
 ```bash
-sudo yay -S mateengine
+yay -S mateengine
 ```
 
 ### 系统要求

@@ -23,7 +23,7 @@ fi
 if grep -qE "arch|artix" /etc/os-release || { [ -f /etc/os-release ] && . /etc/os-release && [[ "$ID_LIKE" == *"arch"* ]]; }; then
     echo "This system is Arch-based.";
     echo "Please use the following command to install MateEngine:";
-    echo "sudo yay -S mateengine";
+    echo "yay -S mateengine";
     exit;
 fi
 
