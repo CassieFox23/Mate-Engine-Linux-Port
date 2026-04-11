@@ -12,10 +12,12 @@ using Random = System.Random;
 using Unity.VisualScripting;
 
 using static APIs.Hyprland.HyprlandUtils;
+using NUnit.Framework;
+using System.Reflection;
 
 namespace APIs.Hyprland
 {
-    public class HyprlandManager : IDisposable, IWindowManagerImplementation
+    public class HyprlandManager : Singleton<HyprlandManager>, IDisposable, IWindowManagerImplementation
     {
         const int _LayerBackground = 0;
         const int _LayerBottom = 1;
@@ -67,14 +69,14 @@ namespace APIs.Hyprland
             _HyprlandEventReader = new HyprlandEventReader();
             _HyprlandEventReader.HyprlandEvent += HyprlandEvent;
             _HyprlandEventReader.Start(new List<string>
-        {
-            HyprlandEventNames.ActiveWindow,
-            HyprlandEventNames.ActiveWindowV2,
-            HyprlandEventNames.FocusMonitor,
-            HyprlandEventNames.FocusMonitorV2,
-            HyprlandEventNames.WindowTitle,
-            HyprlandEventNames.WindowTitleV2
-        });
+            {
+                HyprlandEventNames.ActiveWindow,
+                HyprlandEventNames.ActiveWindowV2,
+                HyprlandEventNames.FocusMonitor,
+                HyprlandEventNames.FocusMonitorV2,
+                HyprlandEventNames.WindowTitle,
+                HyprlandEventNames.WindowTitleV2
+            });
         }
 
         async void HyprlandEvent(object sender, HyprlandEventArgs hyprlandEventArgs)
@@ -378,8 +380,9 @@ namespace APIs.Hyprland
                 _CursorOver = false;
                 return;
             }
-            // if the window is being dragged or a menu is open the window is always focusable
-            var forceFocus = MenuActions.IsAnyMenuOpen() || IsDragging;
+            var isBigScreen = AvatarBigScreenHandler.ActiveHandlers.FirstOrDefault()?.IsBigScreenActive ?? false;
+            // if the window is being dragged, in bigscreen or a menu is open the window is always focusable
+            var forceFocus = MenuActions.IsAnyMenuOpen() || IsDragging || isBigScreen;
             if (forceFocus)
             {
                 await SetFocusableAsync(true);
@@ -432,9 +435,16 @@ namespace APIs.Hyprland
             return _LastCursorPosition;
         }
 
+        private bool _CurrentFocusState;
+
         async Task SetFocusableAsync(bool focusable)
         {
-            await _HyprlandDispatcher.SetPropAsync(_Window.address, "no_focus", !focusable);
+            if(focusable != _CurrentFocusState)
+            {
+                _CurrentFocusState = focusable;
+                // ShowError(focusable);
+                await _HyprlandDispatcher.SetPropAsync(_Window.address, "no_focus", !focusable);
+            }
         }
 
         public async void SetWindowPosition(Vector2Int position)
@@ -639,6 +649,7 @@ namespace APIs.Hyprland
         public void Dispose()
         {
             _CancellationTokenSource.Cancel();
+            _LoopTask?.Dispose();
             _HyprlandDispatcher?.Dispose();
             _HyprlandEventReader?.Dispose();
         }

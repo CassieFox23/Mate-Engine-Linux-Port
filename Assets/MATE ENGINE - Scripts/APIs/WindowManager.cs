@@ -77,7 +77,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                 switch(_currentDesktopEnv)
                 {
                     case DesktopEnvironments.Hyprland:
-                        _windowManagerImplementation = new HyprlandManager();
+                        _windowManagerImplementation = Singleton<HyprlandManager>.Instance;
                         break;
                     case DesktopEnvironments.Kde:
                         if (SaveLoadHandler.Instance.data.useKWinApi)
@@ -443,8 +443,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         _running = false;
         _closing = true;
 
-        if(_windowManagerImplementation is IDisposable disposable)
-            disposable?.Dispose();
+        // if(_windowManagerImplementation is IDisposable disposable)
+        //     disposable?.Dispose();
 
         if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero && _wakeupAtom != IntPtr.Zero)
         {
