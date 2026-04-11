@@ -51,7 +51,6 @@ namespace APIs.Hyprland
 
         HyprlandEventReader _HyprlandEventReader;
         HyprlandDispatcher _HyprlandDispatcher;
-        SemaphoreSlim _LoopLock = new SemaphoreSlim(1,1);
 
         public HyprlandManager()
         {
@@ -60,7 +59,7 @@ namespace APIs.Hyprland
             _Clients = new ConcurrentDictionary<IntPtr, HyprlandClient>();
             _Layers = new ConcurrentDictionary<IntPtr, HyprlandClient>();
             _CancellationTokenSource = new CancellationTokenSource();
-            _LoopTask = Task.Run(async () => Update(_CancellationTokenSource.Token), _CancellationTokenSource.Token);
+            _LoopTask = Task.Run(async () => await UpdateAsync(_CancellationTokenSource.Token), _CancellationTokenSource.Token);
 
             _HyprlandDispatcher = new HyprlandDispatcher();
             _HyprlandDispatcher.Initialize();
@@ -82,7 +81,6 @@ namespace APIs.Hyprland
         {
             try
             {
-                await _LoopLock.WaitAsync(_CancellationTokenSource.Token);
                 switch (hyprlandEventArgs.EventName)
                 {
                     case HyprlandEventNames.MoveToWorkspace:
@@ -139,10 +137,6 @@ namespace APIs.Hyprland
             catch(Exception ex)
             {
                 ShowError(ex.ToString());
-            }
-            finally
-            {
-                _LoopLock.Release();
             }
         }
 
@@ -203,14 +197,13 @@ namespace APIs.Hyprland
             _ImidiateStopWatch.Start();
         }
 
-        async Task Update(CancellationToken cancellationToken)
+        async Task UpdateAsync(CancellationToken cancellationToken)
         {
             var c = 0;
             while (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
-                    await _LoopLock.WaitAsync(cancellationToken);
                     // check if the avatar window has been identified
                     if (_Window == null)
                     {
@@ -246,7 +239,6 @@ namespace APIs.Hyprland
                     _ImidiateStopWatch.Stop();
                 //ShowError($"LoopDelay: {delay}");
                 c++;
-                _LoopLock.Release();
             }
         }
 
@@ -274,7 +266,7 @@ namespace APIs.Hyprland
                                 floating = false,
                                 size = new int[] { layer.sizeVector.x, layer.sizeVector.y },
                                 pinned = true,
-                                title = layer.name,
+                                initialClass = layer.name,
                                 pid = layer.pid,
                                 monitor = _Monitors.FirstOrDefault(a => a.name == monitorName)?.id ?? 0
                             };
@@ -285,9 +277,11 @@ namespace APIs.Hyprland
 
             foreach (var address in _Layers.Keys)
             {
+                if(_Layers[address].initialClass == "hyprland.imaginary")
+                    continue;
                 if (!layersPerMonitor.Any(a => a.Value.levels.Any(b => b.Value.Any(c => c.addressIntPtr == address))))
                 {
-                    ShowError($"Remove Layer: {address}");
+                    // ShowError($"Remove Layer: {_Layers[address].initialClass} {address}");
                     _Layers.TryRemove(address, out _);
                 }
             }
@@ -297,10 +291,18 @@ namespace APIs.Hyprland
             {
                 foreach (var monitor in _Monitors)
                 {
-                    var hasBottomPanel = _Layers.Any(a => a.Value.atVector.y + a.Value.sizeVector.y == monitor.height && a.Value.sizeVector.x > monitor.width / 2);
-                    if(hasBottomPanel)
-                        continue;
                     var pointer = new IntPtr(monitor.name.GetHashCode());
+                    var hasBottomPanel = _Layers.Any(a => a.Value.sizeVector.y < monitor.height / 4 && a.Value.atVector.y + a.Value.sizeVector.y == monitor.height && a.Value.sizeVector.x > monitor.width / 2);
+                    if(hasBottomPanel)
+                    {
+                        if(_Layers.ContainsKey(pointer))
+                        {
+                            // ShowError($"Remove imaginary layer: {monitor.name}");
+                            _Layers.TryRemove(pointer, out _);
+                        }
+                        continue;
+                    }
+                    
                     if (!_Layers.ContainsKey(pointer))
                     {
                         _Layers[pointer] = new HyprlandClient
@@ -310,16 +312,19 @@ namespace APIs.Hyprland
                             floating = false,
                             size = new int[] { monitor.size.x, 100 },
                             pinned = true,
+                            initialClass = "hyprland.imaginary",
                             title = monitor.name,
                             pid = 0,
                             monitor = monitor.id
                         };
+                        // ShowError($"Create imaginary layer: {monitor.name}");
                     }
                 }
             }
-
+            // ShowError("------");
             // foreach(var layers in _Layers.Values)
             //     ShowError($"{layers.address}: {layers.monitor} {layers.title} {layers.atVector} {layers.sizeVector}");
+            // ShowError("------");
         }
 
         ConcurrentDictionary<IntPtr, HyprlandClient> _Layers;
@@ -423,6 +428,7 @@ namespace APIs.Hyprland
 
         public Vector2Int GetMousePosition()
         {
+            //ShowError(_LastCursorPosition);
             return _LastCursorPosition;
         }
 
@@ -433,7 +439,7 @@ namespace APIs.Hyprland
 
         public async void SetWindowPosition(Vector2Int position)
         {
-            // ShowError(position);
+            //ShowError(position);
             await _HyprlandDispatcher.MoveWindowPixelExactAsync(_Window.address, position);
             _Window.at = new int[] { position.x, position.y };
             TriggerImidiateUpdates();
@@ -441,13 +447,11 @@ namespace APIs.Hyprland
 
         public async void SetWindowSize(Vector2Int size)
         {
-            TriggerImidiateUpdates();
-            // ShowError(size);
+            //ShowError(size);
             await _HyprlandDispatcher.ResizewindowpixelExactWindowSizeAsync(_Window.address, size);
             _Window.size = new int[] { size.x, size.y };
+            TriggerImidiateUpdates();
         }
-
-        Vector2Int _LastPrintedPost = Vector2Int.zero;
 
         public Vector2Int GetWindowPosition()
         {
@@ -635,7 +639,6 @@ namespace APIs.Hyprland
         public void Dispose()
         {
             _CancellationTokenSource.Cancel();
-            _LoopTask?.Dispose();
             _HyprlandDispatcher?.Dispose();
             _HyprlandEventReader?.Dispose();
         }
