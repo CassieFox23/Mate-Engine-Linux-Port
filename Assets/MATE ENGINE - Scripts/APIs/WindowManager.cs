@@ -45,7 +45,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     private Vector2Int _initialMousePos;
     private Vector2Int _initialWindowPos;
-    private bool _isDragging;
+    private volatile bool _isDragging;
 
     private bool _dontUpdateCursor;
     
@@ -86,6 +86,15 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                 }
                 _windowManagerImplementation?.SetXUnityWindow(_unityWindow);
             }
+            else
+            {
+                _currentDesktopEnv = _currentSessionType switch
+                {
+                    SessionTypes.X11 => DesktopEnvironments.OtherX11,
+                    SessionTypes.Wayland => DesktopEnvironments.OtherWayland,
+                    _ => DesktopEnvironments.Unknown
+                };
+            }
             if (!Enum.TryParse(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), true, out _currentSessionType))
             {
                 _currentSessionType = SessionTypes.Unknown;
@@ -99,13 +108,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                     "Thus, features like window-sitting could hardly be implemented under various Wayland-based DEs. Please use X11 DEs to enjoy the best of MateEngine.",
                     "wayland", null, 30000);
             }
-
-            _currentDesktopEnv = _currentSessionType switch
-            {
-                SessionTypes.X11 => DesktopEnvironments.OtherX11,
-                SessionTypes.Wayland => DesktopEnvironments.OtherWayland,
-                _ => DesktopEnvironments.Unknown
-            };
         }
         catch (Exception e)
         {
@@ -151,6 +153,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         else
         {
             ShowError("No matching windows found for PID.");
+            return;
         }
         XSelectInput(_display, _unityWindow, StructureNotifyMask | EnterWindowMask | LeaveWindowMask | PropertyChangeMask);
         EnableClickThroughTransparency();
@@ -442,10 +445,18 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero && _wakeupAtom != IntPtr.Zero)
         {
             XCompositeUnredirectWindow(_display, _unityWindow, CompositeRedirectAutomatic);
-            XStoreName(_display, _unityWindow, "Closing...");
+            XClientMessageEvent wakeUpEv = new XClientMessageEvent
+            {
+                type = ClientMessage,
+                window = _unityWindow,
+                message_type = _wakeupAtom,
+                format = 32
+            };
+        
+            XSendEvent(_display, _unityWindow, false, 0, ref wakeUpEv);
             XFlush(_display);
         }
-        if (_x11EventThread is { IsAlive: true })
+        if (_x11EventThread.IsAlive)
         {
             _x11EventThread.Join();
         }
@@ -462,10 +473,12 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                 _damage = IntPtr.Zero;
             }
 #endif
-            if (_useShm)
+            if (_shmInfo.shmaddr != IntPtr.Zero)
             {
+                XDestroyImage(_shmImagePtr);
                 XShmDetach(_display, ref _shmInfo);
                 shmdt(_shmInfo.shmaddr);
+                _shmInfo.shmaddr = IntPtr.Zero;
             }
             XSync(_display, false);
             if (_defaultCursor != IntPtr.Zero) { XFreeCursor(_display, _defaultCursor); _defaultCursor = IntPtr.Zero; }
@@ -607,22 +620,24 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     
     public void QueryMonitors()
     {
-        _monitors = new();
+        _monitors ??= new Dictionary<IntPtr, RectInt>();
         _monitors.Clear();
+
         if (SaveLoadHandler.Instance.safeMode)
         {
             _monitors.Add(IntPtr.Zero, new RectInt(0, 0, Screen.currentResolution.width, Screen.currentResolution.height));
             return;
         }
-        if(_windowManagerImplementation != null && _currentDesktopEnv != DesktopEnvironments.Kde)
+
+        if (_windowManagerImplementation != null && _currentDesktopEnv != DesktopEnvironments.Kde)
         {
-            foreach(var m in _windowManagerImplementation.GetAllMonitors())
+            foreach (var m in _windowManagerImplementation.GetAllMonitors())
                 _monitors[m.Id] = m.Rect;
             return;
         }
 
         if (_display == IntPtr.Zero) return;
-            
+        
         if (XRRQueryExtension(_display, out _, out _) == 0)
         {
             Debug.LogError("XRandR extension not available.");
@@ -635,51 +650,62 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             return;
         }
 
-        var resHandle = XRRGetScreenResourcesCurrent(_display, _rootWindow);
-        var res = Marshal.PtrToStructure<XrrScreenResources>(resHandle);
+        IntPtr resHandle = XRRGetScreenResourcesCurrent(_display, _rootWindow);
+        if (resHandle == IntPtr.Zero) return;
 
-        if (res.noutput <= 0)
+        try
+        {
+            XrrScreenResources res = Marshal.PtrToStructure<XrrScreenResources>(resHandle);
+            if (res.noutput <= 0) return;
+
+            for (int i = 0; i < res.noutput; i++)
+            {
+                IntPtr output = Marshal.ReadIntPtr(res.outputs, i * IntPtr.Size);
+                IntPtr outInfoHandle = XRRGetOutputInfo(_display, resHandle, output);
+            
+                if (outInfoHandle == IntPtr.Zero) continue;
+
+                try
+                {
+                    XrrOutputInfo outInfo = Marshal.PtrToStructure<XrrOutputInfo>(outInfoHandle);
+                    if (outInfo.connection != Connection.Connected || outInfo.crtc == IntPtr.Zero) continue;
+
+                    IntPtr crtcInfoHandle = XRRGetCrtcInfo(_display, resHandle, outInfo.crtc);
+                    if (crtcInfoHandle == IntPtr.Zero) continue;
+
+                    try
+                    {
+                        XrrCrtcInfo crtcInfo = Marshal.PtrToStructure<XrrCrtcInfo>(crtcInfoHandle);
+                        if (crtcInfo.width == 0 || crtcInfo.height == 0) continue;
+
+                        _monitors[output] = new RectInt(crtcInfo.x, crtcInfo.y, (int)crtcInfo.width, (int)crtcInfo.height);
+                    }
+                    finally
+                    {
+                        XRRFreeCrtcInfo(crtcInfoHandle);
+                    }
+                }
+                finally
+                {
+                    XRRFreeOutputInfo(outInfoHandle);
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            ShowError($"Error querying monitors: {e.Message}");
+        }
+        finally
         {
             XRRFreeScreenResources(resHandle);
-            return;
         }
-
-        for (var i = 0; i < res.noutput; i++)
-        {
-            var output = Marshal.ReadIntPtr(res.outputs, i * IntPtr.Size);
-            var outInfoHandle = XRRGetOutputInfo(_display, resHandle, output);
-            var outInfo = Marshal.PtrToStructure<XrrOutputInfo>(outInfoHandle);
-            if (outInfo.connection != Connection.Connected || outInfo.crtc == IntPtr.Zero)
-            {
-                XRRFreeOutputInfo(outInfoHandle);
-                continue;
-            }
-
-            var crtcInfoHandle = XRRGetCrtcInfo(_display, resHandle, outInfo.crtc);
-            var crtcInfo = Marshal.PtrToStructure<XrrCrtcInfo>(crtcInfoHandle);
-            if (crtcInfo.width == 0 || crtcInfo.height == 0 || crtcInfoHandle == IntPtr.Zero)
-            {
-                XRRFreeCrtcInfo(crtcInfoHandle);
-                XRRFreeOutputInfo(outInfoHandle);
-                continue;
-            }
-
-            var monRect = new RectInt(crtcInfo.x, crtcInfo.y, (int)crtcInfo.width, (int)crtcInfo.height);
-            _monitors[outInfoHandle] = monRect;
-
-            XRRFreeCrtcInfo(crtcInfoHandle);
-            XRRFreeOutputInfo(outInfoHandle);
-        }
-
-        XRRFreeScreenResources(resHandle);
 
         if (_monitors.Count == 0)
         {
             ShowError("No monitors were found.");
         }
     }
-
-
+    
     private string GetWindowType(IntPtr hwnd)  // Returns type atom name or empty
     {
         if (_netWmWindowType == IntPtr.Zero) return "";
@@ -687,8 +713,10 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         if (status != 0 || prop == IntPtr.Zero || nItems == 0) { if (prop != IntPtr.Zero) XFree(prop); return ""; }
         var typeAtom = Marshal.ReadIntPtr(prop);
         XFree(prop);
-        // Map to string (add XGetAtomName if needed)
-        return XGetAtomName(_display, typeAtom);
+        var atomNamePtr = XGetAtomName(_display, typeAtom);
+        var atomName = Marshal.PtrToStringAuto(atomNamePtr);
+        XFree(atomNamePtr);
+        return atomName;
     }
     
     public bool GetWindowSize(out float x, out float y)
@@ -872,9 +900,10 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     public RectInt GetMonitorRectFromWindow(IntPtr window = default)
     {
         if (!GetWindowRect(window, out var winRect)) return new RectInt();
+    
         var center = new Vector2Int(winRect.x + winRect.width / 2, winRect.y + winRect.height / 2);
-        print(center);
         var resultBasedOnWindowCenterPnt = GetMonitorRectFromPoint(center);
+    
         if (resultBasedOnWindowCenterPnt == RectInt.zero)
         {
             Dictionary<float, RectInt> overlapMonitors = new();
@@ -889,11 +918,16 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
                     float overlapWidth = Mathf.Max(0f, xMax - xMin);
                     float overlapHeight = Mathf.Max(0f, yMax - yMin);
-                    overlapMonitors.Add(overlapWidth * overlapHeight, mon);
+                    overlapMonitors.TryAdd(overlapWidth * overlapHeight, mon);
                 }
             }
 
-            return overlapMonitors[overlapMonitors.Keys.Max()];
+            if (overlapMonitors.Count > 0)
+            {
+                return overlapMonitors[overlapMonitors.Keys.Max()];
+            }
+        
+            return RectInt.zero; 
         }
         return resultBasedOnWindowCenterPnt;
     }
@@ -1017,12 +1051,23 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             {
                 if (children != IntPtr.Zero && nChildren > 0)
                 {
-                    for (var i = 0; i < nChildren; i++)
+                    try
                     {
-                        var child = Marshal.ReadIntPtr(children, i * IntPtr.Size);
-                        EnumerateWindows(child, accumulator);
+                        for (var i = 0; i < nChildren; i++)
+                        {
+                            var child = Marshal.ReadIntPtr(children, i * IntPtr.Size);
+                            EnumerateWindows(child, accumulator);
+                        }
                     }
-                    XFree(children);
+                    catch (Exception e)
+                    {
+                        ShowError(e.ToString());
+                        throw;
+                    }
+                    finally
+                    {
+                        XFree(children);
+                    }
                 }
             }
         }
@@ -1088,7 +1133,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         xClient.data3 = IntPtr.Zero;
         xClient.data4 = IntPtr.Zero;
         
-        XSendEvent(_display, _rootWindow, false, 0x00100000 | SubstructureRedirectMask, ref xClient);
+        XSendEvent(_display, _rootWindow, false, SubstructureNotifyMask | SubstructureRedirectMask, ref xClient);
         XFlush(_display);
     }
         
@@ -1116,7 +1161,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         msg.data3 = IntPtr.Zero;
         msg.data4 = new(1);
 
-        XSendEvent(_display, _rootWindow, false, 0x10000L | 0x20000L, ref msg);
+        XSendEvent(_display, _rootWindow, false, SubstructureRedirectMask | SubstructureNotifyMask, ref msg);
         XFlush(_display);
     }
 
@@ -1211,11 +1256,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         {
             if (_desktop == IntPtr.Zero || XGetWindowAttributes(_display, _desktop, out _) == 0)
             {
-                var allWin = GetAllVisibleWindows();
-                foreach (var win in allWin)
+                foreach (var win in GetAllVisibleWindows())
                 {
-                    if (IsDesktop(win))
-                        _desktop = win;
+                    if (!IsDesktop(win)) continue;
+                    _desktop = win;
+                    break;
                 }
             }
             return _desktop;
@@ -1397,7 +1442,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private void EnableClickThroughTransparency()
     {
         if (_running || !transparentInputEnabled || SaveLoadHandler.Instance.safeMode) return;
-        SetupTransparentInput();
+        if (!SetupTransparentInput()) return;
         _running = true;
         _x11EventThread = new Thread(ApplyShaping)
         {
@@ -1408,24 +1453,24 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         _x11EventThread.Start();
     }
 
-    private void SetupTransparentInput()
+    private bool SetupTransparentInput()
     {
         if (XGetWindowAttributes(_display, _unityWindow, out var attrs) == 0)
         {
             ShowError("Failed to get window attributes");
-            return;
+            return false;
         }
 
         if (attrs.depth != 32 || !IsArgbVisual(_display, attrs.visual))
         {
             ShowError("Unity window does not have a 32-bit ARGB visual. Skipping shaping.");
-            return;
+            return false;
         }
 
         if (!IsCompositionSupported())
         {
             ShowError("No compositor found.");
-            return;
+            return false;
         }
 
         XCompositeRedirectWindow(_display, _unityWindow, CompositeRedirectAutomatic);
@@ -1458,6 +1503,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                     if (XShmAttach(_display, ref _shmInfo) == 0)
                     {
                         _useShm = false;
+                        shmdt(_shmInfo.shmaddr);
+                        _shmInfo.shmaddr = IntPtr.Zero;
                     }
                     else
                     {
@@ -1483,17 +1530,18 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         if (!XDamageQueryExtension(_display, out _damageEventBase, out _))
         {
             ShowError("XDamage extension not available");
-            return;
+            return false;
         }
 
         _damage = XDamageCreate(_display, _unityWindow, XDamageReportNonEmpty);
         if (_damage == IntPtr.Zero)
         {
             ShowError("Failed to create damage object");
-            return;
+            return false;
         }
 
         UpdateInputMask(attrs.width, attrs.height);
+        return true;
     }
 
     private bool IsArgbVisual(IntPtr display, IntPtr visual)
@@ -1589,6 +1637,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                 if (xImagePtr == IntPtr.Zero)
                 {
                     ShowError("XGetImage failed");
+                    XFreePixmap(_display, backingPixmap);
                     return;
                 }
             }
@@ -1647,6 +1696,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         {
             XShmDetach(_display, ref _shmInfo);
             shmdt(_shmInfo.shmaddr);
+            _shmInfo.shmaddr = IntPtr.Zero;
         }
 
         if (XGetWindowAttributes(_display, _unityWindow, out var attrs) == 0) return false;
@@ -1674,6 +1724,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         if (XShmAttach(_display, ref _shmInfo) == 0)
         {
             shmdt(_shmInfo.shmaddr);
+            _shmInfo.shmaddr = IntPtr.Zero;
             return false;
         }
 
@@ -1686,6 +1737,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         {
             XShmDetach(_display, ref _shmInfo);
             shmdt(_shmInfo.shmaddr);
+            _shmInfo.shmaddr = IntPtr.Zero;
             return false;
         }
 
@@ -1847,8 +1899,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     private int _damageEventBase;
     private IntPtr _damage = IntPtr.Zero;
-    private bool _running;
-    private bool _closing;
+    private volatile bool _running;
+    private volatile bool _closing;
     private Thread _x11EventThread;
     private Stopwatch _shapingStopwatch;
     private bool _useShm;
@@ -2425,7 +2477,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private static extern void XRRFreeCrtcInfo(IntPtr crtcInfo);
 
     [DllImport(LibX11)]
-    private static extern string XGetAtomName(IntPtr display, IntPtr atom);
+    private static extern IntPtr XGetAtomName(IntPtr display, IntPtr atom);
 
     [DllImport(LibX11)]
     private static extern bool XGetErrorText(IntPtr display, int code, byte[] buffer, int size);
