@@ -1029,6 +1029,10 @@ MonoBehaviour:
     m_Key: LSS_KWIN_TIP
     m_Metadata:
       m_Items: []
+  - m_Id: 133155393819766784
+    m_Key: LSS_WINTYPE_DESKTOP
+    m_Metadata:
+      m_Items: []
   m_Metadata:
     m_Items: []
   m_KeyGenerator:

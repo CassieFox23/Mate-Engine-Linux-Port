@@ -29,6 +29,13 @@ public enum SessionTypes
     Unknown
 }
 
+public enum WindowType
+{
+    Normal = 0,
+    Dock = 1,
+    Desktop = 2
+}
+
 public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerEnterHandler, IPointerExitHandler
 {
     public static WindowManager Instance;
@@ -210,6 +217,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         _netWmStateAbove = XInternAtom(_display, "_NET_WM_STATE_ABOVE", false);
         _netWmStateSkipTaskbar = XInternAtom(_display, "_NET_WM_STATE_SKIP_TASKBAR", false);
         _netWmWindowTypeDock = XInternAtom(_display, "_NET_WM_WINDOW_TYPE_DOCK", false);
+        _netWmWindowTypeDesktop = XInternAtom(_display, "_NET_WM_WINDOW_TYPE_DESKTOP", false);
         _netWmWindowTypeNormal = XInternAtom(_display, "_NET_WM_WINDOW_TYPE_NORMAL", false);
         _motifHintsAtom = XInternAtom(_display, "_MOTIF_WM_HINTS", false);
         _wakeupAtom = XInternAtom(_display, "_SDL_WAKEUP", false);
@@ -629,7 +637,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
         var resHandle = XRRGetScreenResourcesCurrent(_display, _rootWindow);
         var res = Marshal.PtrToStructure<XrrScreenResources>(resHandle);
-            
+
         if (res.noutput <= 0)
         {
             XRRFreeScreenResources(resHandle);
@@ -990,8 +998,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             }
 
             if (prop != IntPtr.Zero) XFree(prop);
+            return new List<IntPtr>();
         }
-
         ShowError("Fallback to recursive enumeration because _NET_CLIENT_LIST is not available");
         EnumerateWindows(_rootWindow, result);
         _cachedVisibleWindows = result;
@@ -1160,6 +1168,9 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         {
             case WindowType.Dock:
                 ChangeProperty(_netWmWindowType, (IntPtr)XaAtom, 32, PropModeReplace, _netWmWindowTypeDock, 1);
+                break;
+            case WindowType.Desktop:
+                ChangeProperty(_netWmWindowType, (IntPtr)XaAtom, 32, PropModeReplace, _netWmWindowTypeDesktop, 1);
                 break;
             case WindowType.Normal:
                 ChangeProperty(_netWmWindowType, (IntPtr)XaAtom, 32, PropModeReplace, _netWmWindowTypeNormal, 1);
@@ -1560,38 +1571,52 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
         if (backingPixmap != IntPtr.Zero)
         {
-            if (XShmGetImage(_display, backingPixmap, _shmImagePtr, 0, 0, AllPlanes))
+            if (_useShm)
             {
-                xImagePtr = _shmImagePtr;
+                if (XShmGetImage(_display, backingPixmap, _shmImagePtr, 0, 0, AllPlanes))
+                {
+                    xImagePtr = _shmImagePtr;
+                }
+                else
+                {
+                    ShowError("XShmGetImage on Pixmap failed.");
+                    _useShm = false;
+                }
             }
             else
             {
-                ShowError("XShmGetImage on Pixmap failed.");
-                _useShm = false;
+                xImagePtr = XGetImage(_display, backingPixmap, 0, 0, (uint)width, (uint)height, AllPlanes, ZPixmap);
+                if (xImagePtr == IntPtr.Zero)
+                {
+                    ShowError("XGetImage failed");
+                    return;
+                }
             }
-                
+
             XFreePixmap(_display, backingPixmap);
         }
         else
         {
-            if (XShmGetImage(_display, _unityWindow, _shmImagePtr, 0, 0, AllPlanes))
+            if (_useShm)
             {
-                xImagePtr = _shmImagePtr;
+                if (XShmGetImage(_display, _unityWindow, _shmImagePtr, 0, 0, AllPlanes))
+                {
+                    xImagePtr = _shmImagePtr;
+                }
+                else
+                {
+                    ShowError("XShmGetImage on Window failed unexpectedly.");
+                    _useShm = false;
+                }
             }
             else
             {
-                ShowError("XShmGetImage on Window failed unexpectedly.");
-                _useShm = false;
-            }
-        }
-
-        if (!_useShm)
-        {
-            xImagePtr = XGetImage(_display, _unityWindow, 0, 0, (uint)width, (uint)height, AllPlanes, ZPixmap);
-            if (xImagePtr == IntPtr.Zero)
-            {
-                ShowError("XGetImage failed");
-                return;
+                xImagePtr = XGetImage(_display, _unityWindow, 0, 0, (uint)width, (uint)height, AllPlanes, ZPixmap);
+                if (xImagePtr == IntPtr.Zero)
+                {
+                    ShowError("XGetImage failed");
+                    return;
+                }
             }
         }
 
@@ -1811,7 +1836,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private IntPtr _unityWindow;
     private Dictionary<IntPtr, RectInt> _monitors;
     private IntPtr _netWmState, _netWmStateFullscreen, _netWmStateMaxHorz, _netWmStateMaxVert, _netWmStateAbove, _netWmStateSkipTaskbar;
-    private IntPtr _netWmWindowType, _netWmWindowTypeDock, _netWmWindowTypeNormal;
+    private IntPtr _netWmWindowType, _netWmWindowTypeDock, _netWmWindowTypeDesktop, _netWmWindowTypeNormal;
     private IntPtr _netMoveResizeWindow;
     private IntPtr _motifHintsAtom;
     

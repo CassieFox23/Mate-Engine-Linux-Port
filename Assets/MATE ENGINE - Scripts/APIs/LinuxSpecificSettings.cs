@@ -6,12 +6,6 @@ using UnityEngine.Localization.Settings;
 using UnityEngine.Localization.Tables;
 using Application = Gtk.Application;
 
-public enum WindowType
-{
-    Normal = 0,
-    Dock = 1
-}
-
 public class LinuxSpecificSettings : MonoBehaviour
 {
     private StringTable stringTable; 
@@ -25,7 +19,7 @@ public class LinuxSpecificSettings : MonoBehaviour
     private bool useLegacyMoveResizeCalls;
     private bool enableAutoMemoryTrim;
     private bool forceKWin;
-    private WindowType windowType; // 0 for Normal, 1 for Dock
+    private WindowType windowType;
     
     private Vector2 scrollPos;
 
@@ -115,6 +109,7 @@ public class LinuxSpecificSettings : MonoBehaviour
         var model = new ListStore(typeof(string));
         model.AppendValues(stringTable.GetEntry("LSS_WINTYPE_NORMAL").GetLocalizedString());
         model.AppendValues(stringTable.GetEntry("LSS_WINTYPE_DOCK").GetLocalizedString());
+        model.AppendValues(stringTable.GetEntry("LSS_WINTYPE_DESKTOP").GetLocalizedString());
         winTypeCombo.Model = model;
         winTypeCombo.Active = (int)SaveLoadHandler.Instance.data.windowType;
         
@@ -210,7 +205,7 @@ public class LinuxSpecificSettings : MonoBehaviour
         winTypeLabel.Yalign = 0.5f;
         hbox.PackStart(winTypeLabel, false, false, 0);
 
-        winTypeCombo = new ComboBox(new[] { stringTable.GetEntry("LSS_WINTYPE_NORMAL").GetLocalizedString(), stringTable.GetEntry("LSS_WINTYPE_DOCK").GetLocalizedString() }){Active = (int)SaveLoadHandler.Instance.data.windowType};
+        winTypeCombo = new ComboBox(new[] { stringTable.GetEntry("LSS_WINTYPE_NORMAL").GetLocalizedString(), stringTable.GetEntry("LSS_WINTYPE_DOCK").GetLocalizedString(), stringTable.GetEntry("LSS_WINTYPE_DESKTOP").GetLocalizedString() }){Active = (int)SaveLoadHandler.Instance.data.windowType};
         hbox.PackStart(winTypeCombo, false, false, 0);
         
         winTypeDesc = CreateDescriptionLabel(stringTable.GetEntry("LSS_WINTYPE_TIP").GetLocalizedString());
@@ -354,7 +349,7 @@ public class LinuxSpecificSettings : MonoBehaviour
         GUILayout.BeginHorizontal();
         GUILayout.Label(stringTable.GetEntry("LSS_WINTYPE").GetLocalizedString(), GUILayout.Width(100));
         
-        windowType = (WindowType)GUILayout.SelectionGrid((int)windowType, new [] { stringTable.GetEntry("LSS_WINTYPE_NORMAL").GetLocalizedString(), stringTable.GetEntry("LSS_WINTYPE_DOCK").GetLocalizedString() }, 2);
+        windowType = (WindowType)GUILayout.SelectionGrid((int)windowType, new [] { stringTable.GetEntry("LSS_WINTYPE_NORMAL").GetLocalizedString(), stringTable.GetEntry("LSS_WINTYPE_DOCK").GetLocalizedString(), stringTable.GetEntry("LSS_WINTYPE_DESKTOP").GetLocalizedString() }, 2);
         GUILayout.EndHorizontal();
 
         GUILayout.Label(stringTable.GetEntry("LSS_WINTYPE_TIP").GetLocalizedString(), 

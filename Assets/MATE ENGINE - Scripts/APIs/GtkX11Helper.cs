@@ -25,13 +25,6 @@ public class GtkX11Helper
 
     public static void Init(IntPtr window)
     {
-        ExceptionManager.UnhandledException += args =>
-        {
-            Debug.LogError("Exception in Gtk# callback delegate.");
-            Debug.LogError((UnhandledExceptionEventArgs)args.ExceptionObject);
-            Debug.LogError(new StackTrace(true));
-            UnityEngine.Application.Quit(1);
-        };
         if (Instance != null)
         {
             Debug.LogError("Trying to create multiple Gtk instances.");
