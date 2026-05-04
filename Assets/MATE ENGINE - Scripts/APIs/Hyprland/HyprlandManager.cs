@@ -17,7 +17,7 @@ using System.Reflection;
 
 namespace APIs.Hyprland
 {
-    public class HyprlandManager : Singleton<HyprlandManager>, IDisposable, IWindowManagerImplementation
+    public class HyprlandManager : Singleton<HyprlandManager>, IWindowManagerImplementation
     {
         const int _LayerBackground = 0;
         const int _LayerBottom = 1;
@@ -26,6 +26,9 @@ namespace APIs.Hyprland
 
         Vector2Int _LastCursorPosition = Vector2Int.zero;
         bool _CursorOver = false;
+
+        // enables sitting on the bottom of the monitor, many hyprland setups dont have a task or dock at the bottom of the screen
+        bool _MonitorSitting = false;
 
         Stopwatch _ImidiateStopWatch;
         TimeSpan _ImidiateStopWatchRuntime = TimeSpan.FromSeconds(1);
@@ -77,6 +80,15 @@ namespace APIs.Hyprland
                 HyprlandEventNames.WindowTitle,
                 HyprlandEventNames.WindowTitleV2
             });
+        }
+
+        // deconstructor
+        ~HyprlandManager()
+        {
+            _CancellationTokenSource.Cancel();
+            _LoopTask?.Dispose();
+            _HyprlandDispatcher?.Dispose();
+            _HyprlandEventReader?.Dispose();
         }
 
         async void HyprlandEvent(object sender, HyprlandEventArgs hyprlandEventArgs)
@@ -289,7 +301,7 @@ namespace APIs.Hyprland
             }
 
             // create imaginary layers on each monitor where no bottom dock was found
-            if (_Monitors != null && _Monitors.Length > 0)
+            if (_MonitorSitting && _Monitors != null && _Monitors.Length > 0)
             {
                 foreach (var monitor in _Monitors)
                 {
@@ -644,14 +656,6 @@ namespace APIs.Hyprland
             var className = FindClientByWindowId(window)?.initialClass ?? string.Empty;
             // ShowError($"{IntPtrToHex(window)} : {className}");
             return className;
-        }
-
-        public void Dispose()
-        {
-            _CancellationTokenSource.Cancel();
-            _LoopTask?.Dispose();
-            _HyprlandDispatcher?.Dispose();
-            _HyprlandEventReader?.Dispose();
         }
 
         IntPtr? _XUnityWindow;
