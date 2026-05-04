@@ -6,7 +6,8 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
-using Tmds.DBus;
+// named namespace to prevent naming conflicts with X11 classes
+using TDBus= Tmds.DBus;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using Debug = UnityEngine.Debug;
@@ -60,14 +61,21 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     #region Unity Events
 
+    TDBus.Connection _dBusConnection;
+    TDBus.ConnectionInfo _dBusConnectionInfo;
+
+    bool _WaylandWarningPosted;
+
     private async void OnEnable()
     {
         try
         {
             Instance = this;
             
-            var connection = new Tmds.DBus.Connection(Address.Session);
-            var connectionInfo = await connection.ConnectAsync();
+            if(_dBusConnection == null)
+                _dBusConnection = new TDBus.Connection(TDBus.Address.Session);
+            if(_dBusConnectionInfo == null)
+                _dBusConnectionInfo = await _dBusConnection.ConnectAsync();
             
             if (Enum.TryParse(Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP"), true, out _currentDesktopEnv))
             {
@@ -79,7 +87,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                     case DesktopEnvironments.Kde:
                         if (SaveLoadHandler.Instance.data.useKWinApi)
                         {
-                            var km = new KWinManager(connection, connectionInfo);
+                            var km = new KWinManager(_dBusConnection, _dBusConnectionInfo);
                             await km.SetupDBus();
                             _windowManagerImplementation = km;
                         }
@@ -103,11 +111,16 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
             if (_currentSessionType == SessionTypes.Wayland)
             {
-                Singleton<DBusNotificationHelper>.Instance.Init(connection);
-                await Singleton<DBusNotificationHelper>.Instance.Send("Wayland is not fully supported by MateEngine",
-                    "Although Wayland improves security, its fundamental design choices prevent MateEngine (and other X11 applications) from getting window information." +
-                    "Thus, features like window-sitting could hardly be implemented under various Wayland-based DEs. Please use X11 DEs to enjoy the best of MateEngine.",
-                    "wayland", null, 30000);
+                // dont post this warning everytime OnEnabled is invoked
+                if(!_WaylandWarningPosted)
+                {
+                    _WaylandWarningPosted = true;
+                    Singleton<DBusNotificationHelper>.Instance.Init(_dBusConnection);
+                    await Singleton<DBusNotificationHelper>.Instance.Send("Wayland is not fully supported by MateEngine",
+                        "Although Wayland improves security, its fundamental design choices prevent MateEngine (and other X11 applications) from getting window information." +
+                        "Thus, features like window-sitting could hardly be implemented under various Wayland-based DEs. Please use X11 DEs to enjoy the best of MateEngine.",
+                        "wayland", null, 30000);
+                }
             }
         }
         catch (Exception e)
