@@ -27,9 +27,6 @@ namespace APIs.Hyprland
         Vector2Int _LastCursorPosition = Vector2Int.zero;
         bool _CursorOver = false;
 
-        // enables sitting on the bottom of the monitor, many hyprland setups dont have a task or dock at the bottom of the screen
-        bool _MonitorSitting = false;
-
         Stopwatch _ImidiateStopWatch;
         TimeSpan _ImidiateStopWatchRuntime = TimeSpan.FromSeconds(1);
         CancellationTokenSource _CancellationTokenSource;
@@ -300,14 +297,13 @@ namespace APIs.Hyprland
                 }
             }
 
-            // create imaginary layers on each monitor where no bottom dock was found
-            if (_MonitorSitting && _Monitors != null && _Monitors.Length > 0)
+            // create imaginary layers on each monitor when allowHyprlandMonitorSitting is enabled
+            if (_Monitors != null && _Monitors.Length > 0)
             {
                 foreach (var monitor in _Monitors)
                 {
                     var pointer = new IntPtr(monitor.name.GetHashCode());
-                    var hasBottomPanel = _Layers.Any(a => a.Value.sizeVector.y < monitor.height / 4 && a.Value.atVector.y + a.Value.sizeVector.y == monitor.height && a.Value.sizeVector.x > monitor.width / 2);
-                    if(hasBottomPanel)
+                    if(!SaveLoadHandler.Instance.data.allowHyprlandMonitorSitting)
                     {
                         if(_Layers.ContainsKey(pointer))
                         {

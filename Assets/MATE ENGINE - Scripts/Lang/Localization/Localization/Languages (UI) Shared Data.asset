@@ -1033,6 +1033,14 @@ MonoBehaviour:
     m_Key: LSS_WINTYPE_DESKTOP
     m_Metadata:
       m_Items: []
+  - m_Id: 141664102742867968
+    m_Key: LSS_HYPR_MS
+    m_Metadata:
+      m_Items: []
+  - m_Id: 141664176348708864
+    m_Key: LSS_HYPR_MS_TIP
+    m_Metadata:
+      m_Items: []
   m_Metadata:
     m_Items: []
   m_KeyGenerator:
