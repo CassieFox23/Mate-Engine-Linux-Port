@@ -12,9 +12,6 @@ using UnityEngine.EventSystems;
 using Debug = UnityEngine.Debug;
 using Unity.Burst;
 using Unity.Collections;
-using UnityEngine.SceneManagement;
-using System.Runtime.Remoting.Messaging;
-using Unity.VisualScripting;
 using APIs.Hyprland;
 
 public enum DesktopEnvironments
