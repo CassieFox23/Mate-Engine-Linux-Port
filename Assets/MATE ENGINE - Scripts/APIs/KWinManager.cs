@@ -109,6 +109,8 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
 
     public bool IsDragging { get; set; }
     
+    private volatile bool _isProcessing;
+    
     public KWinManager(Connection connection, ConnectionInfo connectionInfo) 
     {
         _CancellationTokenSource = new CancellationTokenSource();
@@ -359,7 +361,8 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
 
     private async Task MoveWindow(Vector2Int pos)
     {
-        if (!_initialized) return;
+        if (!_initialized | _isProcessing) return;
+        _isProcessing = true;
         string scriptName = $"KWin_MoveWin.js"; 
         string jsScript = _template.Replace("placeholder", "KWin_MoveWin") + $@"
             for (let w of workspace.{(_kdeVersion.StartsWith("5") ? "clientList" : "windowList")}()) {{
@@ -402,6 +405,7 @@ public class KWinManager : IDisposable, IWindowManagerImplementation
             
             if (completedTask == timeout) throw new TimeoutException($"Script {scriptFileName} timed out.");
 
+            _isProcessing = false;
             return await tcs.Task;
         }
         finally

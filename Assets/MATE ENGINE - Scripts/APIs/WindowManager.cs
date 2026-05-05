@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using Tmds.DBus;
 using UnityEngine;
@@ -56,6 +57,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     public IntPtr RootWindow => _rootWindow;
 
     public IntPtr UnityWindow => _unityWindow;
+    
+    private XErrorHandler _errorHandlerDelegate;
 
     #region Unity Events
 
@@ -137,6 +140,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private void Awake()
     {
         Init();
+        CheckSingleInstanceForNoNetWmPidSupportCompositors();
         var pid = Process.GetCurrentProcess().Id;
         var windows = FindWindowsByPid(pid);
 
@@ -149,16 +153,39 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             return;
 #endif
             SetWindowBorderless();
-        }
-        else
-        {
-            ShowError("No matching windows found for PID.");
+            XSelectInput(_display, _unityWindow, StructureNotifyMask | EnterWindowMask | LeaveWindowMask | PropertyChangeMask);
+            EnableClickThroughTransparency();
+            LoadCursors();
+            print($"{GetType()} initialization completed.");
             return;
         }
-        XSelectInput(_display, _unityWindow, StructureNotifyMask | EnterWindowMask | LeaveWindowMask | PropertyChangeMask);
-        EnableClickThroughTransparency();
-        LoadCursors();
-        print($"{GetType()} initialization completed.");
+        ShowError("No matching windows found for PID.");
+    }
+    
+    private void CheckSingleInstanceForNoNetWmPidSupportCompositors()
+    {
+        var allWindows = GetAllVisibleWindows();
+        int matchCount = 0;
+
+        foreach (var window in allWindows)
+        {
+            if (GetClassName(window).Equals(Process.GetCurrentProcess().ProcessName, StringComparison.Ordinal))
+            {
+                int windowPid = GetWindowPid(window);
+
+                if (windowPid == -1)
+                {
+                    matchCount++;
+                
+                    if (matchCount > 1)
+                    {
+                        Debug.LogError("Blocking: Multiple windows found with PID -1.");
+                        Application.Quit();
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     private void OnApplicationQuit() => Dispose();
@@ -205,7 +232,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             throw new Exception("Cannot open X11 display");
         }
 
-        XSetErrorHandler(ShowError);
+        _errorHandlerDelegate = ShowError;
+        XSetErrorHandler(_errorHandlerDelegate);
         RegisterExtension();
 
 
@@ -243,14 +271,10 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     
         if (_display == IntPtr.Zero) return "Display not initialized";
 
-        var buffer = new byte[256];
-
-        XGetErrorText(_display, error.error_code, buffer, buffer.Length);
-
-        int count = Array.IndexOf(buffer, (byte)0);
-        if (count < 0) count = buffer.Length;
+        var buffer = new StringBuilder(256);
+        XGetErrorText(_display, error.error_code, buffer, buffer.Capacity);
     
-        string message = System.Text.Encoding.ASCII.GetString(buffer, 0, count);
+        string message = buffer.ToString();
     
         if (string.IsNullOrEmpty(message))
         {
@@ -818,7 +842,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
         return new Vector2Int(rootX, rootY);
     }
-    
+
     public bool GetMousePosition(out Vector2Int position)
     {
         // Query mouse position
@@ -831,7 +855,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         position = new Vector2Int(rootX, rootY);
         return result;
     }
-        
+
     public bool GetMouseButton(KeyCode button) // 0=left, 1=right, 2=middle
     {
         if (_display == IntPtr.Zero) return false;
@@ -854,7 +878,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             _ => false
         };
     }
-        
+
     public bool IsAnyKeyDown()
     {
         if (SaveLoadHandler.Instance.safeMode)
@@ -876,7 +900,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         }
         return false;
     }
-        
+
     public RectInt GetMonitorRectFromPoint(Vector2Int point)
     {
         foreach (var mon in _monitors.Values)
@@ -896,7 +920,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         
         throw new KeyNotFoundException($"No such monitor includes the center point of that window.");
     }
-        
+
     public RectInt GetMonitorRectFromWindow(IntPtr window = default)
     {
         if (!GetWindowRect(window, out var winRect)) return new RectInt();
@@ -931,7 +955,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         }
         return resultBasedOnWindowCenterPnt;
     }
-    
+
     public RectInt GetMonitorFromHandle(IntPtr monitor)
     {
         foreach (var kvp in _monitors.Where(kvp => kvp.Key == monitor))
@@ -949,7 +973,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         XGetWindowAttributes(_display, _unityWindow, out var attr);
         return new Vector2(attr.width, attr.height);
     }
-        
+
     public Dictionary<IntPtr, RectInt> GetAllMonitors() => new(_monitors); // Copy to prevent external modification
 
     private List<IntPtr> FindWindowsByPid(int targetPid)
@@ -963,9 +987,18 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         foreach (var window in windows)
         {
             var pid = GetWindowPid(window);
+            var cls = GetClassName(window);
             if (pid == targetPid)
             {
                 result.Add(window);
+            }
+            
+            if (pid == -1)
+            {
+                if (cls.Equals(Process.GetCurrentProcess().ProcessName, StringComparison.Ordinal))
+                {
+                    result.Add(window);
+                }
             }
         }
 
@@ -980,9 +1013,10 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
         if (pidAtom == IntPtr.Zero)
         {
-            Debug.Log("_NET_WM_PID atom not found");
+            ShowError("_NET_WM_PID atom not found");
             return -1;
         }
+        
         var status = XGetWindowProperty(_display, window, pidAtom,
             0, 1, false, (IntPtr)XaCardinal,
             out _, out _,
@@ -997,7 +1031,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
         return -1;
     }
-    
+
     private List<IntPtr> _cachedVisibleWindows;
     private DateTime _lastCacheTime;
     private const float CacheRefreshSeconds = 1f;
@@ -1103,10 +1137,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             _windowManagerImplementation.SetTopmost(topmost);
             return;
         }
-#if UNITY_EDITOR
-        return;
-#endif
-        if (_closing)
+        if (_closing || _display == IntPtr.Zero)
             return;
         if (_netWmStateAbove == IntPtr.Zero)
         {
@@ -1164,7 +1195,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         XSendEvent(_display, _rootWindow, false, SubstructureRedirectMask | SubstructureNotifyMask, ref msg);
         XFlush(_display);
     }
-
 
     private void SetWindowBorderless()
     {
@@ -2453,7 +2483,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private static extern int XNextEvent(IntPtr display, ref XEvent ev);
         
     [DllImport(LibXRandR)]
-    private static extern int XRRQueryExtension(IntPtr display, out IntPtr eventBase, out IntPtr errorBase);
+    private static extern int XRRQueryExtension(IntPtr display, out int eventBase, out int errorBase);
 
     [DllImport(LibXRandR)]
     private static extern int XRRQueryVersion(IntPtr display, out int major, out int minor);
@@ -2479,8 +2509,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     [DllImport(LibX11)]
     private static extern IntPtr XGetAtomName(IntPtr display, IntPtr atom);
 
-    [DllImport(LibX11)]
-    private static extern bool XGetErrorText(IntPtr display, int code, byte[] buffer, int size);
+    [DllImport(LibX11, CharSet = CharSet.Ansi)]
+    private static extern void XGetErrorText(IntPtr display, int code, StringBuilder buffer, int size);
 
     [DllImport(LibX11)]
     private static extern XErrorHandler XSetErrorHandler(XErrorHandler handler);
