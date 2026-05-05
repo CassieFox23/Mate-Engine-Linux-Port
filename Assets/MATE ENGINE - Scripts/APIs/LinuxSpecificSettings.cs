@@ -319,7 +319,6 @@ public class LinuxSpecificSettings : MonoBehaviour
 
         windowRect = GUILayout.Window(GetHashCode(), windowRect, DrawWindow, stringTable.GetEntry("LINUX_SPECIFIC").GetLocalizedString());
         
-        // Optional: Clamp to screen edges to prevent dragging completely off-screen
         windowRect.x = Mathf.Clamp(windowRect.x, 0, Screen.width - windowRect.width);
         windowRect.y = Mathf.Clamp(windowRect.y, 0, Screen.height - windowRect.height);
     }
@@ -377,6 +376,12 @@ public class LinuxSpecificSettings : MonoBehaviour
 
         GUILayout.Label(stringTable.GetEntry("LSS_KWIN_TIP").GetLocalizedString());
         
+        GUILayout.Space(10f);
+        
+        allowHyprlandMonitorSitting = GUILayout.Toggle(allowHyprlandMonitorSitting, stringTable.GetEntry("LSS_HYPR_MS").GetLocalizedString());
+
+        GUILayout.Label(stringTable.GetEntry("LSS_HYPR_MS_TIP").GetLocalizedString());
+        
         GUILayout.EndScrollView();
         
         GUILayout.FlexibleSpace();
@@ -392,6 +397,7 @@ public class LinuxSpecificSettings : MonoBehaviour
             SaveLoadHandler.Instance.data.enableAutoMemoryTrim = enableAutoMemoryTrim;
             SaveLoadHandler.Instance.data.useKWinApi = forceKWin;
             SaveLoadHandler.Instance.data.windowType = windowType;
+            SaveLoadHandler.Instance.data.allowHyprlandMonitorSitting = allowHyprlandMonitorSitting;
 
             FindFirstObjectByType<SettingsHandlerToggles>().ApplySettings();
             SaveLoadHandler.Instance.SaveToDisk();

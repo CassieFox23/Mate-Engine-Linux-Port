@@ -66,13 +66,20 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     TDBus.Connection _dBusConnection;
     TDBus.ConnectionInfo _dBusConnectionInfo;
-
-    bool _WaylandWarningPosted;
-
+    
     private async void OnEnable()
     {
         try
         {
+            // Only one single living instance is allowed
+            if (Instance)
+            {
+                if (Instance != this)
+                {
+                    Destroy(this);
+                }
+                return;
+            }
             Instance = this;
             
             if(_dBusConnection == null)
@@ -114,16 +121,12 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
             if (_currentSessionType == SessionTypes.Wayland)
             {
-                // dont post this warning everytime OnEnabled is invoked
-                if(!_WaylandWarningPosted)
-                {
-                    _WaylandWarningPosted = true;
-                    Singleton<DBusNotificationHelper>.Instance.Init(_dBusConnection);
-                    await Singleton<DBusNotificationHelper>.Instance.Send("Wayland is not fully supported by MateEngine",
-                        "Although Wayland improves security, its fundamental design choices prevent MateEngine (and other X11 applications) from getting window information." +
-                        "Thus, features like window-sitting could hardly be implemented under various Wayland-based DEs. Please use X11 DEs to enjoy the best of MateEngine.",
-                        "wayland", null, 30000);
-                }
+                // Removed _WaylandWarningPosted here because later OnEnable calls are blocked
+                Singleton<DBusNotificationHelper>.Instance.Init(_dBusConnection);
+                await Singleton<DBusNotificationHelper>.Instance.Send("Wayland is not fully supported by MateEngine",
+                    "Although Wayland improves security, its fundamental design choices prevent MateEngine (and other X11 applications) from getting window information." +
+                    "Thus, features like window-sitting could hardly be implemented under various Wayland-based DEs. Please use X11 DEs to enjoy the best of MateEngine.",
+                    "wayland", null, 30000);
             }
         }
         catch (Exception e)
@@ -494,7 +497,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             XSendEvent(_display, _unityWindow, false, 0, ref wakeUpEv);
             XFlush(_display);
         }
-        if (_x11EventThread.IsAlive)
+        if (_x11EventThread is { IsAlive: true })
         {
             _x11EventThread.Join();
         }
