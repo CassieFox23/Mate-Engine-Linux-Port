@@ -1538,6 +1538,17 @@ MonoBehaviour:
     m_Localized: Desktop
     m_Metadata:
       m_Items: []
+  - m_Id: 141664176348708864
+    m_Localized: 'Allows the Avatar to sit on the bottom of the screen.
+
+      Useful
+      if your setup has now bottom dock or taskbar.'
+    m_Metadata:
+      m_Items: []
+  - m_Id: 141664102742867968
+    m_Localized: Enable Screen Sitting (Hyprland)
+    m_Metadata:
+      m_Items: []
   references:
     version: 2
     RefIds: []

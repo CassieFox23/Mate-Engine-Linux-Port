@@ -189,6 +189,7 @@ public class SaveLoadHandler : MonoBehaviour
         public WindowType windowType = WindowType.Normal;
         public string ollamaModel = "phi3:mini";
         public bool useKWinApi = false;
+        public bool allowHyprlandMonitorSitting = false;
 
         //ALARM
         [Serializable]

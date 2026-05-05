@@ -47,6 +47,8 @@ public class AvatarBigScreenHandler : MonoBehaviour
     public static List<AvatarBigScreenHandler> ActiveHandlers = new List<AvatarBigScreenHandler>();
     private static readonly int IsBigScreen = Animator.StringToHash("isBigScreen");
 
+    public bool IsBigScreenActive => isBigScreenActive;
+
     void OnEnable()
     {
         if (!ActiveHandlers.Contains(this))

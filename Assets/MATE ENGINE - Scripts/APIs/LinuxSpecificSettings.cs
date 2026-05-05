@@ -19,6 +19,7 @@ public class LinuxSpecificSettings : MonoBehaviour
     private bool useLegacyMoveResizeCalls;
     private bool enableAutoMemoryTrim;
     private bool forceKWin;
+    private bool allowHyprlandMonitorSitting;
     private WindowType windowType;
     
     private Vector2 scrollPos;
@@ -39,6 +40,8 @@ public class LinuxSpecificSettings : MonoBehaviour
     private Label winTypeDesc;
     private CheckButton forceKWinToggle;
     private Label forceKWinDesc;
+    private CheckButton allowHyprlandMonitorSittingToggle;
+    private Label allowHyprlandMonitorSittingDesc;
     private Button cancelBtn;
     private Button saveBtn;
     
@@ -73,6 +76,7 @@ public class LinuxSpecificSettings : MonoBehaviour
             useLegacyMoveResizeCalls = SaveLoadHandler.Instance.data.useLegacyMoveResizeCalls;
             enableAutoMemoryTrim = SaveLoadHandler.Instance.data.enableAutoMemoryTrim;
             forceKWin = SaveLoadHandler.Instance.data.useKWinApi;
+            allowHyprlandMonitorSitting = SaveLoadHandler.Instance.data.allowHyprlandMonitorSitting;
             windowType = SaveLoadHandler.Instance.data.windowType;
             background.SetActive(true);
             if (!show)
@@ -118,6 +122,9 @@ public class LinuxSpecificSettings : MonoBehaviour
         
         ((Label)forceKWinToggle.Child).Text = stringTable.GetEntry("LSS_KWIN").GetLocalizedString();
         forceKWinDesc.Text = stringTable.GetEntry("LSS_KWIN_TIP").GetLocalizedString();
+
+        ((Label)allowHyprlandMonitorSittingToggle.Child).Text = stringTable.GetEntry("LSS_HYPR_MS").GetLocalizedString();
+        allowHyprlandMonitorSittingDesc.Text = stringTable.GetEntry("LSS_HYPR_MS_TIP").GetLocalizedString();
 
         cancelBtn.Label = stringTable.GetEntry("CANCEL").GetLocalizedString();
         saveBtn.Label = stringTable.GetEntry("SAVE").GetLocalizedString();
@@ -218,6 +225,14 @@ public class LinuxSpecificSettings : MonoBehaviour
         
         forceKWinDesc = CreateDescriptionLabel(stringTable.GetEntry("LSS_KWIN_TIP").GetLocalizedString());
         cardBox.PackStart(forceKWinDesc, false, false, 0);
+
+        allowHyprlandMonitorSittingToggle = new CheckButton(stringTable.GetEntry("LSS_HYPR_MS").GetLocalizedString()) {Active = SaveLoadHandler.Instance.data.allowHyprlandMonitorSitting, UseUnderline = false};
+        ((Label)allowHyprlandMonitorSittingToggle.Child).Xalign = 0.0f;
+        ((Label)allowHyprlandMonitorSittingToggle.Child).Yalign = 0.5f;
+        cardBox.PackStart(allowHyprlandMonitorSittingToggle, false, false, 0);
+        
+        allowHyprlandMonitorSittingDesc = CreateDescriptionLabel(stringTable.GetEntry("LSS_HYPR_MS_TIP").GetLocalizedString());
+        cardBox.PackStart(allowHyprlandMonitorSittingDesc, false, false, 0);
         
         var buttonBox = new Box(Orientation.Horizontal, 20) { Halign = Align.End };
         contentBox.PackEnd(buttonBox, false, false, 0);
@@ -237,6 +252,7 @@ public class LinuxSpecificSettings : MonoBehaviour
             SaveLoadHandler.Instance.data.enableAutoMemoryTrim = memTrimToggle.Active;
             SaveLoadHandler.Instance.data.windowType = (WindowType)winTypeCombo.Active;
             SaveLoadHandler.Instance.data.useKWinApi = forceKWinToggle.Active;
+            SaveLoadHandler.Instance.data.allowHyprlandMonitorSitting = allowHyprlandMonitorSittingToggle.Active;
             FindFirstObjectByType<SettingsHandlerToggles>().ApplySettings();
             SaveLoadHandler.Instance.SaveToDisk();
         };
