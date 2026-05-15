@@ -66,6 +66,8 @@ namespace APIs.Hyprland
             _HyprlandDispatcher = new HyprlandDispatcher();
             _HyprlandDispatcher.Initialize();
 
+            ShowError($"LUA Config: {_HyprlandDispatcher.LUAConfigMode}");
+
             _HyprlandEventReader = new HyprlandEventReader();
             _HyprlandEventReader.HyprlandEvent += HyprlandEvent;
             _HyprlandEventReader.Start(new List<string>
@@ -174,13 +176,14 @@ namespace APIs.Hyprland
         async Task SetInitialWindowPropsAsync()
         {
             // turn the window into a floating window
-            await _HyprlandDispatcher.SetFloatingAsync(_Window.address);
+            if(!_Window.floating)
+                await _HyprlandDispatcher.SetFloatingAsync(_Window.address);
             // disable the focus by default
             await _HyprlandDispatcher.SetPropAsync(_Window.address, "no_focus", true);
             // remove all window decorations
             await _HyprlandDispatcher.SetPropAsync(_Window.address, "decorate", false);
             // disable the window background blur
-            await _HyprlandDispatcher.SetPropAsync(_Window.address, "no_blur", "on");
+            await _HyprlandDispatcher.SetPropAsync(_Window.address, "no_blur", true);
 
             // set the initial window size
             var data = SaveLoadHandler.Instance.data;
