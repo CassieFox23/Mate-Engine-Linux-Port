@@ -862,6 +862,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public bool GetMousePosition(out Vector2Int position)
     {
+        if (_windowManagerImplementation != null)
+        {
+            position = _windowManagerImplementation.GetMousePosition();
+            return true;
+        }
         // Query mouse position
         int rootX = 0, rootY = 0;
         IntPtr rootReturn = IntPtr.Zero, childReturn = IntPtr.Zero;
