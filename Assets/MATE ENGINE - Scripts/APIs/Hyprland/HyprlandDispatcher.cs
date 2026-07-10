@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
@@ -33,12 +34,39 @@ namespace APIs.Hyprland
         SemaphoreSlim _QueueSemaphore = new SemaphoreSlim(0);
         UnixDomainSocketEndPoint _EndPoint;
 
+        HyprlandCommandGenerator _CommandGenerator;
+
+        bool _LUAConfigMode = false;
+
+        public bool LUAConfigMode => _LUAConfigMode;
+
+        bool GetConfigMode()
+        {
+            var psi = new ProcessStartInfo()
+            {
+                FileName = "hyprctl",
+                Arguments = "systeminfo",
+                RedirectStandardOutput = true,
+                UseShellExecute = false
+            };
+            var p = Process.Start(psi);
+            var output = p.StandardOutput.ReadToEnd();
+            return output.Contains("configProvider: lua");
+        }
+
         public void Initialize()
         {
             _CancellationTokenSource = new CancellationTokenSource();
             _DispatchItems = new ConcurrentQueue<DispatchItem>();
 
             _EndPoint = new UnixDomainSocketEndPoint(GetSocketPath(_SocketName));
+
+            _LUAConfigMode = GetConfigMode();
+
+            if(_LUAConfigMode)
+                _CommandGenerator = new LUACommandGenerator();
+            else
+                _CommandGenerator = new HyprLangCommandGenerator();
 
             Task.Run(async () =>
             {
@@ -81,27 +109,6 @@ namespace APIs.Hyprland
         }
 
         public bool SocketExists() => SockerExistsImpl(_SocketName);
-
-        public async Task SetPropAsync(string windowAddress, string propName, params object[] propValue)
-        {
-            var args = new string[4 + propValue.Length];
-            args[0] = "dispatch";
-            args[1] = "setprop";
-            args[2] = $"address:{windowAddress}";
-            args[3] = propName;
-            for (int i = 4; i < propValue.Length + 4; i++)
-                args[i] = propValue[i - 4]?.ToString();
-
-            await DispatchCommandAsync(string.Join(" ", args));
-        }
-
-        public async Task MoveWindowToWorkspace(string windowAddress, int workspace, bool silent)
-        {
-            var method = "movetoworkspace";
-            if(silent)
-                method = "movetoworkspacesilent";
-            await DispatchCommandAsync($"dispatch {method} {workspace},address:{windowAddress}");
-        }
 
         public async Task<HyprlandClients> GetClientsAsync()
         {
@@ -147,13 +154,17 @@ namespace APIs.Hyprland
             return Vector2Int.zero;
         }
 
-        public async Task SetFloatingAsync(string windowAddress) => await DispatchCommandAsync($"dispatch setfloating address:{windowAddress}");
+        public async Task SetPropAsync(string windowAddress, string propName, params object[] propValue) => await DispatchCommandAsync(_CommandGenerator.SetPropAsync(windowAddress, propName, propValue));
 
-        public async Task TogglePinAsync(string windowAddress) => await DispatchCommandAsync($"dispatch pin address:{windowAddress}");
+        public async Task MoveWindowToWorkspace(string windowAddress, int workspace, bool silent) => await DispatchCommandAsync(_CommandGenerator.MoveWindowToWorkspace(windowAddress,workspace,silent));
 
-        public async Task ResizewindowpixelExactWindowSizeAsync(string windowAddress, Vector2Int size) => await DispatchCommandAsync($"dispatch resizewindowpixel exact {size.x} {size.y} , address:{windowAddress}");
+        public async Task SetFloatingAsync(string windowAddress) => await DispatchCommandAsync(_CommandGenerator.SetFloatingAsync(windowAddress));
 
-        public async Task MoveWindowPixelExactAsync(string windowAddress, Vector2Int pos) => await DispatchCommandAsync($"dispatch movewindowpixel exact {pos.x} {pos.y} , address:{windowAddress}");
+        public async Task TogglePinAsync(string windowAddress) => await DispatchCommandAsync(_CommandGenerator.TogglePinAsync(windowAddress));
+
+        public async Task ResizewindowpixelExactWindowSizeAsync(string windowAddress, Vector2Int size)  => await DispatchCommandAsync(_CommandGenerator.ResizewindowpixelExactWindowSize(windowAddress,size));
+
+        public async Task MoveWindowPixelExactAsync(string windowAddress, Vector2Int pos) => await DispatchCommandAsync(_CommandGenerator.MoveWindowPixelExact(windowAddress,pos));
 
         async Task<string> DispatchCommandAsync(string command)
         {
@@ -175,5 +186,55 @@ namespace APIs.Hyprland
             _DispatchItems?.Clear();
             _QueueSemaphore?.Release();
         }
+    }
+
+    abstract internal class HyprlandCommandGenerator
+    {
+        internal abstract string ResizewindowpixelExactWindowSize(string windowAddress, Vector2Int size);
+        internal abstract string MoveWindowPixelExact(string windowAddress, Vector2Int pos);
+        internal abstract string SetFloatingAsync(string windowAddress);
+        internal abstract string TogglePinAsync(string windowAddress);
+        internal abstract string MoveWindowToWorkspace(string windowAddress, int workspace, bool silent);
+        internal abstract string SetPropAsync(string windowAddress, string propName, params object[] propValue);
+    }
+
+    internal class LUACommandGenerator : HyprlandCommandGenerator
+    {
+        internal override string MoveWindowPixelExact(string windowAddress, Vector2Int pos) => $"dispatch hl.dsp.window.move({{ x = {pos.x}, y = {pos.y} , window = \"address:{windowAddress}\" }} )";
+
+        internal override string MoveWindowToWorkspace(string windowAddress, int workspace, bool silent) => $"dispatch hl.dsp.window.move({{ workspace = {workspace}, window = \"address:{windowAddress}\", follow = {(!silent).ToString().ToLower()} }})";
+
+        internal override string ResizewindowpixelExactWindowSize(string windowAddress, Vector2Int size) => $"dispatch hl.dsp.window.resize({{ x = {size.x}, y = {size.y} , window = \"address:{windowAddress}\" }} )";
+
+        internal override string SetFloatingAsync(string windowAddress) => $"dispatch hl.dsp.window.float({{ window = \"address:{windowAddress}\" }} )";
+
+        internal override string SetPropAsync(string windowAddress, string propName, params object[] propValue) => $"dispatch hl.dsp.window.set_prop({{ prop = \"{propName}\", value = \"{string.Join(" ", propValue)}\" , window = \"address:{windowAddress}\" }})";
+
+        internal override string TogglePinAsync(string windowAddress) => $"dispatch hl.dsp.window.pin({{  window = \"address:{windowAddress}\" }} )";
+    }
+
+    internal class HyprLangCommandGenerator : HyprlandCommandGenerator
+    {
+        internal override string MoveWindowPixelExact(string windowAddress, Vector2Int pos) => $"dispatch movewindowpixel exact {pos.x} {pos.y} , address:{windowAddress}";
+
+        internal override string MoveWindowToWorkspace(string windowAddress, int workspace, bool silent) => $"dispatch {(silent ? "movetoworkspacesilent" : "movetoworkspace")} {workspace},address:{windowAddress}";
+        
+        internal override string ResizewindowpixelExactWindowSize(string windowAddress, Vector2Int size) => $"dispatch resizewindowpixel exact {size.x} {size.y} , address:{windowAddress}";
+
+        internal override string SetFloatingAsync(string windowAddress) => $"dispatch setfloating address:{windowAddress}";
+
+        internal override string SetPropAsync(string windowAddress, string propName, params object[] propValue)
+        {
+            var args = new string[4 + propValue.Length];
+            args[0] = "dispatch";
+            args[1] = "setprop";
+            args[2] = $"address:{windowAddress}";
+            args[3] = propName;
+            for (int i = 4; i < propValue.Length + 4; i++)
+                args[i] = propValue[i - 4]?.ToString();
+            return string.Join(" ", args);
+        }
+
+        internal override string TogglePinAsync(string windowAddress) => $"dispatch pin address:{windowAddress}";
     }
 }

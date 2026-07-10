@@ -66,14 +66,14 @@ namespace APIs.Hyprland
             _HyprlandDispatcher = new HyprlandDispatcher();
             _HyprlandDispatcher.Initialize();
 
+            ShowError($"LUA Config: {_HyprlandDispatcher.LUAConfigMode}");
+
             _HyprlandEventReader = new HyprlandEventReader();
             _HyprlandEventReader.HyprlandEvent += HyprlandEvent;
             _HyprlandEventReader.Start(new List<string>
             {
                 HyprlandEventNames.ActiveWindow,
                 HyprlandEventNames.ActiveWindowV2,
-                HyprlandEventNames.FocusMonitor,
-                HyprlandEventNames.FocusMonitorV2,
                 HyprlandEventNames.WindowTitle,
                 HyprlandEventNames.WindowTitleV2
             });
@@ -100,11 +100,19 @@ namespace APIs.Hyprland
                             _CurrentWorkspace = int.Parse(hyprlandEventArgs.Parameters[0]);
                             break;
                         }
+                    case HyprlandEventNames.FocusMonitor:
+                        {
+                            // switching monitor also switches the workspace, but there wont be an workspace event
+                            var ws = await _HyprlandDispatcher.GetActiveWorkspace();
+                            _CurrentWorkspace = ws.id;
+                            break;
+                        }
                     case HyprlandEventNames.MoveWindowToWorkspace:
                         {
-                            // check if the snapped window move to a different window and move the avatar window to the same workspace
                             var movedWindow =  AddressToIntPtr(hyprlandEventArgs.Parameters[0]);
                             var targetWorkspace = int.Parse(hyprlandEventArgs.Parameters[1]);
+
+                            // check if the snapped window move to a different window and move the avatar window to the same workspace
                             if(movedWindow == _SnappedWindow && _Window.workspace.id != targetWorkspace)
                                 await _HyprlandDispatcher.MoveWindowToWorkspace(_Window.address, targetWorkspace, true);
                             break;
@@ -174,13 +182,14 @@ namespace APIs.Hyprland
         async Task SetInitialWindowPropsAsync()
         {
             // turn the window into a floating window
-            await _HyprlandDispatcher.SetFloatingAsync(_Window.address);
+            if(!_Window.floating)
+                await _HyprlandDispatcher.SetFloatingAsync(_Window.address);
             // disable the focus by default
             await _HyprlandDispatcher.SetPropAsync(_Window.address, "no_focus", true);
             // remove all window decorations
             await _HyprlandDispatcher.SetPropAsync(_Window.address, "decorate", false);
             // disable the window background blur
-            await _HyprlandDispatcher.SetPropAsync(_Window.address, "no_blur", "on");
+            await _HyprlandDispatcher.SetPropAsync(_Window.address, "no_blur", true);
 
             // set the initial window size
             var data = SaveLoadHandler.Instance.data;
@@ -318,7 +327,7 @@ namespace APIs.Hyprland
                         _Layers[pointer] = new HyprlandClient
                         {
                             address = IntPtrToHex(pointer),
-                            at = new int[] { 0, monitor.size.y - 2 },
+                            at = new int[] { monitor.position.x, monitor.position.y + monitor.size.y - 2 },
                             floating = false,
                             size = new int[] { monitor.size.x, 100 },
                             pinned = true,
@@ -327,7 +336,7 @@ namespace APIs.Hyprland
                             pid = 0,
                             monitor = monitor.id
                         };
-                        // ShowError($"Create imaginary layer: {monitor.name}");
+                        //ShowError($"Create imaginary layer: {monitor.name}, pos:{_Layers[pointer].atVector}, size:{_Layers[pointer].sizeVector}");
                     }
                 }
             }
@@ -349,6 +358,10 @@ namespace APIs.Hyprland
                 return;
             _LastHashCode = clients.hashCode;
 
+            var lastWindowSize = _Window?.sizeVector;
+            var lastWindowPos = _Window?.atVector;
+            var lastMonitor = _Window?.monitor;
+            var lastWorkSpace = _Window?.workspace;
             // detect avatar window
             if (_Window == null)
                 _Window = clients.clients.FirstOrDefault(a => a.pid == Process.GetCurrentProcess().Id);
@@ -356,7 +369,43 @@ namespace APIs.Hyprland
                 _Window = clients.clients.FirstOrDefault(a => a.address == _Window.address);
             if (_Window == null)
                 return;
+            
+            // hyprland does not immidiatly update the monitor and workspace of the avatar window
+            if(_Monitors?.Any() == true)
+            {
+                var centerX = _Window.atVector.x + (_Window.sizeVector.x / 2);
+                var centerY = _Window.atVector.y + (_Window.sizeVector.y / 2);
+                var center = new Vector2Int(centerX,centerY);
+                var monitor = _Monitors.FirstOrDefault(a => new RectInt(a.position,a.size).Contains(center));
+                if(monitor != null)
+                {
+                    
+                    if(monitor.id != _Window.monitor)
+                    {
+                        // ShowError($"Monitor does not match, remapped: {_Window.monitor} > {monitor.id}");
+                        _Window.monitor = monitor.id;
+                        _Window.workspace = monitor.activeWorkspace;
+                    }
+                }
+                else if(lastMonitor != null)
+                {
+                    if(lastMonitor.Value != _Window.monitor)
+                    {
+                        // ShowError($"Last Monitor does not match, remapped: {_Window.monitor} > {lastMonitor.Value}");
+                        _Window.monitor = lastMonitor.Value;
+                        _Window.workspace = lastWorkSpace;
+                    }
+                }
+            }
 
+            // window change outside, fix it
+            if(lastWindowSize != null && _Window.sizeVector != lastWindowSize)
+                SetWindowSize(lastWindowSize.Value);
+
+            if(lastWindowPos != null && _Window.atVector != lastWindowPos)
+                SetWindowPosition(lastWindowPos.Value);
+
+            //ShowError($"Size: {_Window.sizeVector}, Postion: {_Window.atVector}");
             // sync other windows
             var closedWindows = _Clients.Where(existing => !clients.clients.Any(found => found.address == existing.Value.address)).Select(a => a.Key).ToList();
             foreach (var closedWindow in closedWindows)
@@ -400,7 +449,10 @@ namespace APIs.Hyprland
             {
                 // check if the mouse is over the window before making more complicated checks
                 var windowRect = new Rect(_Window.atVector.x, _Window.atVector.y, _Window.sizeVector.x, _Window.sizeVector.y);
+                //ShowError($"windowRect: {windowRect}");
+                //ShowError($"cursorPos: {_LastCursorPosition}");
                 _MouseOverWindow = windowRect.Contains(_LastCursorPosition);
+                //ShowError($"MoveOverWindow: {_MouseOverWindow}");
                 if (_MouseOverWindow)
                 {
                     // check if the mouse is roughly over the avatar
@@ -415,12 +467,12 @@ namespace APIs.Hyprland
                     var avatarRectY = _Window.atVector.y + verticalOffset;
                     var avatarRectWidth =  _Window.sizeVector.x - horizontalOffset * 2;
                     var avatarRectHeight = _Window.sizeVector.y - verticalOffset;
-                    if(avatarRectX < 0)
-                        avatarRectX = 0;
+
                     var monitor = _Monitors[_Window.monitor];
-                    if(avatarRectX + avatarWidth > monitor.width)
-                        avatarRectX = monitor.width - avatarWidth;
-                    //ShowError($"windowRect: {windowRect}");
+                    if(avatarRectX < monitor.position.x)
+                        avatarRectX = monitor.position.x;
+                    if(avatarRectX + avatarWidth > monitor.position.x + monitor.width)
+                        avatarRectX = (monitor.width + monitor.position.x) - avatarWidth;
 
                     var avatarRect = new Rect(avatarRectX, avatarRectY,avatarRectWidth, avatarRectHeight);
                     //ShowError($"avatarRect: {avatarRect}");
