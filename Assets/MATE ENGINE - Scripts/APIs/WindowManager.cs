@@ -2487,11 +2487,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private static extern IntPtr XRenderFindVisualFormat(IntPtr display, IntPtr visual);
 
     [DllImport(LibX11)]
-    private static extern IntPtr XGetImage(IntPtr display, IntPtr drawable, int x, int y, uint width, uint height,
+    public static extern IntPtr XGetImage(IntPtr display, IntPtr drawable, int x, int y, uint width, uint height,
         ulong planeMask, int format);
 
     [DllImport(LibX11)]
-    private static extern int XDestroyImage(IntPtr xImage);
+    public static extern int XDestroyImage(IntPtr xImage);
 
     [DllImport(LibX11)]
     private static extern ulong XGetPixel(IntPtr xImage, int x, int y);

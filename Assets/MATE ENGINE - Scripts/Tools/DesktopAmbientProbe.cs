@@ -1,6 +1,5 @@
 using UnityEngine;
 using System;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 public class DesktopAmbientProbe : MonoBehaviour
@@ -23,47 +22,39 @@ public class DesktopAmbientProbe : MonoBehaviour
     [Range(0f, 4f)] public float maxColorIntensity = 0.8f;
     [Range(0.5f, 3f)] public float saturationGamma = 1.3f;
 
-#if UNITY_STANDALONE_WIN
-    const int SM_XVIRTUALSCREEN = 76;
-    const int SM_YVIRTUALSCREEN = 77;
-    const int SM_CXVIRTUALSCREEN = 78;
-    const int SM_CYVIRTUALSCREEN = 79;
-    const int SRCCOPY = 0x00CC0020;
-
-    [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hwnd);
-    [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
-    [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr hdc);
-    [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr hdc);
-    [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
-    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr hObject);
-    [DllImport("gdi32.dll")] static extern bool StretchBlt(IntPtr hdcDest, int xDest, int yDest, int wDest, int hDest, IntPtr hdcSrc, int xSrc, int ySrc, int wSrc, int hSrc, int rop);
-    [DllImport("gdi32.dll")] static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFO pbmi, uint iUsage, out IntPtr ppvBits, IntPtr hSection, uint dwOffset);
-    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-    [DllImport("user32.dll")] static extern IntPtr GetActiveWindow();
-    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-    [DllImport("user32.dll")] static extern int GetSystemMetrics(int nIndex);
+    [DllImport("libX11.so.6")]
+    static extern int XGetWindowAttributes(IntPtr display, IntPtr window, out XWindowAttributes attributes);
+    
+    [DllImport("libX11.so.6")]
+    static extern IntPtr XGetImage(IntPtr display, IntPtr drawable, int x, int y, uint width, uint height, ulong plane_mask, int format);
+    
+    [DllImport("libX11.so.6")]
+    static extern int XDestroyImage(IntPtr image);
 
     [StructLayout(LayoutKind.Sequential)]
-    struct RECT { public int left; public int top; public int right; public int bottom; }
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct BITMAPINFOHEADER
+    struct XWindowAttributes
     {
-        public uint biSize; public int biWidth; public int biHeight; public ushort biPlanes; public ushort biBitCount; public uint biCompression; public uint biSizeImage; public int biXPelsPerMeter; public int biYPelsPerMeter; public uint biClrUsed; public uint biClrImportant;
+        public int x, y, width, height, border_width, depth;
+        public IntPtr visual, root;
+        public int class_, bit_gravity, win_gravity, backing_store;
+        public ulong backing_planes, backing_pixel;
+        public int save_under;
+        public ulong colormap;
+        public int map_installed, map_state;
+        public long all_event_masks, your_event_mask, do_not_propagate_mask;
+        public int override_redirect;
+        public IntPtr screen;
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    struct BITMAPINFO { public BITMAPINFOHEADER bmiHeader; }
-
-    IntPtr deskDC;
-    IntPtr memDC;
-    IntPtr dib;
-    IntPtr dibBits;
-    IntPtr oldObj;
-    int virtX, virtY, virtW, virtH;
-    byte[] pixelBytes;
-#endif
+    struct XImage
+    {
+        public int width, height, xoffset, format;
+        public IntPtr data;
+        public int byte_order, bitmap_unit, bitmap_bit_order, bitmap_pad, depth, bytes_per_line, bits_per_pixel;
+        public ulong red_mask, green_mask, blue_mask;
+        public IntPtr obdata;
+    }
 
     float nextTick;
     Vector3 hsvTop;
@@ -80,17 +71,7 @@ public class DesktopAmbientProbe : MonoBehaviour
     void Start()
     {
         TryLoadToggle();
-#if UNITY_STANDALONE_WIN
-        InitCapture();
-#endif
         inited = true;
-    }
-
-    void OnDestroy()
-    {
-#if UNITY_STANDALONE_WIN
-        ReleaseCapture();
-#endif
     }
 
     void TryLoadToggle()
@@ -120,101 +101,50 @@ public class DesktopAmbientProbe : MonoBehaviour
         if (Time.unscaledTime >= nextTick)
         {
             nextTick = Time.unscaledTime + 1f / Mathf.Max(1f, captureHz);
-#if UNITY_STANDALONE_WIN
-            if (EnsureCaptureValid()) CaptureAndAnalyze();
-#endif
+            CaptureAndAnalyze();
         }
         SmoothTowardsTargets(Time.unscaledDeltaTime);
         ApplyToLights();
     }
 
-#if UNITY_STANDALONE_WIN
-    bool EnsureCaptureValid()
-    {
-        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
-        int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
-        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-        if (vw <= 0 || vh <= 0) return false;
-        if (vw != virtW || vh != virtH || vx != virtX || vy != virtY) InitCapture();
-        return memDC != IntPtr.Zero && dib != IntPtr.Zero && dibBits != IntPtr.Zero;
-    }
-
-    void InitCapture()
-    {
-        ReleaseCapture();
-        virtX = GetSystemMetrics(SM_XVIRTUALSCREEN);
-        virtY = GetSystemMetrics(SM_YVIRTUALSCREEN);
-        virtW = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        virtH = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-        deskDC = GetDC(IntPtr.Zero);
-        memDC = CreateCompatibleDC(deskDC);
-        BITMAPINFO bmi = new BITMAPINFO();
-        bmi.bmiHeader.biSize = (uint)Marshal.SizeOf(typeof(BITMAPINFOHEADER));
-        bmi.bmiHeader.biWidth = captureWidth;
-        bmi.bmiHeader.biHeight = -captureHeight;
-        bmi.bmiHeader.biPlanes = 1;
-        bmi.bmiHeader.biBitCount = 32;
-        bmi.bmiHeader.biCompression = 0;
-        dib = CreateDIBSection(memDC, ref bmi, 0, out dibBits, IntPtr.Zero, 0);
-        oldObj = SelectObject(memDC, dib);
-        pixelBytes = new byte[captureWidth * captureHeight * 4];
-    }
-
-    void ReleaseCapture()
-    {
-        if (memDC != IntPtr.Zero && oldObj != IntPtr.Zero) SelectObject(memDC, oldObj);
-        if (dib != IntPtr.Zero) { DeleteObject(dib); dib = IntPtr.Zero; }
-        if (memDC != IntPtr.Zero) { DeleteDC(memDC); memDC = IntPtr.Zero; }
-        if (deskDC != IntPtr.Zero) { ReleaseDC(IntPtr.Zero, deskDC); deskDC = IntPtr.Zero; }
-        dibBits = IntPtr.Zero;
-    }
-
-    IntPtr GetUnityHwnd()
-    {
-        IntPtr h = GetActiveWindow();
-        if (h != IntPtr.Zero) return h;
-        h = GetForegroundWindow();
-        if (h != IntPtr.Zero)
-        {
-            GetWindowThreadProcessId(h, out uint pid);
-            var p = Process.GetCurrentProcess();
-            if (pid == (uint)p.Id) return h;
-        }
-        return IntPtr.Zero;
-    }
-
     void CaptureAndAnalyze()
     {
-        StretchBlt(memDC, 0, 0, captureWidth, captureHeight, deskDC, virtX, virtY, virtW, virtH, SRCCOPY);
-        Marshal.Copy(dibBits, pixelBytes, 0, pixelBytes.Length);
+        var wm = WindowManager.Instance;
+        if (wm == null || wm.Display == IntPtr.Zero) return;
 
-        RECT wr = new RECT();
-        var hwnd = GetUnityHwnd();
-        bool haveWnd = hwnd != IntPtr.Zero && GetWindowRect(hwnd, out wr);
-        int wx0 = 0, wy0 = 0, wx1 = 0, wy1 = 0;
+        bool haveWnd = wm.GetWindowRect(out var wr);
+        
+        XGetWindowAttributes(wm.Display, wm.RootWindow, out var rootAttr);
+        int screenW = rootAttr.width, screenH = rootAttr.height;
+
+        CalculateSampleRects(screenW, screenH, wr.x, wr.y, wr.width, wr.height, 
+            bandThicknessPx, excludeMarginPx, haveWnd, 
+            out var topRect, out var botRect, out var leftRect, out var rightRect);
+
+        SetHSVTargets(AvgColor(topRect), AvgColor(botRect), 
+            AvgColor(leftRect), AvgColor(rightRect));
+    }
+    
+    void CalculateSampleRects(int screenW, int screenH, int wx0, int wy0, int winW, int winH, 
+                              int band, int margin, bool haveWnd, 
+                              out RectInt topRect, out RectInt botRect, out RectInt leftRect, out RectInt rightRect)
+    {
         if (haveWnd)
         {
-            wx0 = Mathf.RoundToInt(((wr.left - virtX) / (float)virtW) * captureWidth);
-            wy0 = Mathf.RoundToInt(((wr.top - virtY) / (float)virtH) * captureHeight);
-            wx1 = Mathf.RoundToInt(((wr.right - virtX) / (float)virtW) * captureWidth);
-            wy1 = Mathf.RoundToInt(((wr.bottom - virtY) / (float)virtH) * captureHeight);
-        }
-        int band = Mathf.Max(1, Mathf.RoundToInt(bandThicknessPx * (captureHeight / (float)Mathf.Max(1, virtH))));
-        int margin = Mathf.Max(0, Mathf.RoundToInt(excludeMarginPx * (captureHeight / (float)Mathf.Max(1, virtH))));
+            int wx1 = wx0 + winW;
+            int wy1 = wy0 + winH;
 
-        RectInt topRect = new RectInt(0, Mathf.Max(0, wy0 - band), captureWidth, Mathf.Clamp(band, 1, captureHeight));
-        RectInt botRect = new RectInt(0, Mathf.Min(captureHeight - band, wy1 + 0), captureWidth, Mathf.Clamp(band, 1, captureHeight));
-        RectInt leftRect = new RectInt(Mathf.Max(0, wx0 - band), Mathf.Clamp(wy0, 0, captureHeight - 1), Mathf.Clamp(band, 1, captureWidth), Mathf.Clamp(wy1 - wy0, 1, captureHeight));
-        RectInt rightRect = new RectInt(Mathf.Min(captureWidth - band, wx1 + 0), Mathf.Clamp(wy0, 0, captureHeight - 1), Mathf.Clamp(band, 1, captureWidth), Mathf.Clamp(wy1 - wy0, 1, captureHeight));
+            topRect = new RectInt(0, Mathf.Max(0, wy0 - band), screenW, Mathf.Clamp(band, 1, screenH));
+            botRect = new RectInt(0, Mathf.Min(screenH - band, wy1), screenW, Mathf.Clamp(band, 1, screenH));
+            leftRect = new RectInt(Mathf.Max(0, wx0 - band), Mathf.Clamp(wy0, 0, screenH - 1), Mathf.Clamp(band, 1, screenW), Mathf.Clamp(winH, 1, screenH));
+            rightRect = new RectInt(Mathf.Min(screenW - band, wx1), Mathf.Clamp(wy0, 0, screenH - 1), Mathf.Clamp(band, 1, screenW), Mathf.Clamp(winH, 1, screenH));
 
-        if (haveWnd)
-        {
-            topRect = ClampRect(topRect, captureWidth, captureHeight);
-            botRect = ClampRect(botRect, captureWidth, captureHeight);
-            leftRect = ClampRect(leftRect, captureWidth, captureHeight);
-            rightRect = ClampRect(rightRect, captureWidth, captureHeight);
-            RectInt inside = new RectInt(Mathf.Clamp(wx0 - margin, 0, captureWidth - 1), Mathf.Clamp(wy0 - margin, 0, captureHeight - 1), Mathf.Clamp((wx1 - wx0) + 2 * margin, 1, captureWidth), Mathf.Clamp((wy1 - wy0) + 2 * margin, 1, captureHeight));
+            topRect = ClampRect(topRect, screenW, screenH);
+            botRect = ClampRect(botRect, screenW, screenH);
+            leftRect = ClampRect(leftRect, screenW, screenH);
+            rightRect = ClampRect(rightRect, screenW, screenH);
+
+            RectInt inside = new RectInt(Mathf.Clamp(wx0 - margin, 0, screenW - 1), Mathf.Clamp(wy0 - margin, 0, screenH - 1), Mathf.Clamp(winW + 2 * margin, 1, screenW), Mathf.Clamp(winH + 2 * margin, 1, screenH));
             Exclude(ref topRect, inside);
             Exclude(ref botRect, inside);
             Exclude(ref leftRect, inside);
@@ -222,19 +152,17 @@ public class DesktopAmbientProbe : MonoBehaviour
         }
         else
         {
-            int hband = Mathf.Max(1, captureHeight / 5);
-            int wband = Mathf.Max(1, captureWidth / 8);
-            topRect = new RectInt(0, hband, captureWidth, hband);
-            botRect = new RectInt(0, captureHeight - hband * 2, captureWidth, hband);
-            leftRect = new RectInt(wband, hband, wband, captureHeight - 2 * hband);
-            rightRect = new RectInt(captureWidth - wband * 2, hband, wband, captureHeight - 2 * hband);
+            int hband = Mathf.Max(1, screenH / 5);
+            int wband = Mathf.Max(1, screenW / 8);
+            topRect = new RectInt(0, hband, screenW, hband);
+            botRect = new RectInt(0, screenH - hband * 2, screenW, hband);
+            leftRect = new RectInt(wband, hband, wband, screenH - 2 * hband);
+            rightRect = new RectInt(screenW - wband * 2, hband, wband, screenH - 2 * hband);
         }
+    }
 
-        Color ct = AvgColor(topRect);
-        Color cb = AvgColor(botRect);
-        Color cl = AvgColor(leftRect);
-        Color cr = AvgColor(rightRect);
-
+    void SetHSVTargets(Color ct, Color cb, Color cl, Color cr)
+    {
         Color.RGBToHSV(ct, out float hTop, out float sTop, out float vTop);
         Color.RGBToHSV(cb, out float hBot, out float sBot, out float vBot);
         Color.RGBToHSV(cl, out float hLeft, out float sLeft, out float vLeft);
@@ -253,10 +181,8 @@ public class DesktopAmbientProbe : MonoBehaviour
         }
         else
         {
-            hsvTopTarget = tTop;
-            hsvBotTarget = tBot;
-            hsvLeftTarget = tLeft;
-            hsvRightTarget = tRight;
+            hsvTopTarget = tTop; hsvBotTarget = tBot;
+            hsvLeftTarget = tLeft; hsvRightTarget = tRight;
         }
     }
 
@@ -287,34 +213,44 @@ public class DesktopAmbientProbe : MonoBehaviour
         r = best.width > 0 && best.height > 0 ? best : new RectInt(r.x, r.y, 1, 1);
     }
 
-    Color AvgColor(RectInt r)
+    unsafe Color AvgColor(RectInt r)
     {
-        long rb = 0, gb = 0, bb = 0;
-        int count = 0;
-        int stride = captureWidth * 4;
-        int x0 = r.x; int x1 = r.x + r.width;
-        int y0 = r.y; int y1 = r.y + r.height;
-        for (int y = y0; y < y1; y++)
+        var wm = WindowManager.Instance;
+        if (wm == null || wm.Display == IntPtr.Zero || r.width <= 0 || r.height <= 0) return Color.black;
+
+        IntPtr imgPtr = XGetImage(wm.Display, wm.RootWindow, r.x, r.y, (uint)r.width, (uint)r.height, 0xFFFFFFFF, 2); // 2 = ZPixmap
+        if (imgPtr == IntPtr.Zero) return Color.black;
+
+        XImage img = Marshal.PtrToStructure<XImage>(imgPtr);
+        long rb = 0, gb = 0, bb = 0, count = 0;
+        bool isLSB = img.byte_order == 0;
+
+        for (int y = 0; y < img.height; y++)
         {
-            int row = y * stride;
-            for (int x = x0; x < x1; x++)
+            byte* row = (byte*)img.data + y * img.bytes_per_line;
+            for (int x = 0; x < img.width; x++)
             {
-                int i = row + x * 4;
-                byte b = pixelBytes[i + 0];
-                byte g = pixelBytes[i + 1];
-                byte a = pixelBytes[i + 3];
-                byte r8 = pixelBytes[i + 2];
-                if (a == 0) continue;
+                byte r8 = 0, g = 0, b = 0, a = 255;
+                if (img.bits_per_pixel == 32)
+                {
+                    if (isLSB) { b = row[x * 4]; g = row[x * 4 + 1]; r8 = row[x * 4 + 2]; a = row[x * 4 + 3]; }
+                    else       { a = row[x * 4]; r8 = row[x * 4 + 1]; g = row[x * 4 + 2]; b = row[x * 4 + 3]; }
+                    if (a == 0) continue;
+                }
+                else if (img.bits_per_pixel == 24)
+                {
+                    int offset = x * 3;
+                    if (isLSB) { b = row[offset]; g = row[offset + 1]; r8 = row[offset + 2]; }
+                    else       { r8 = row[offset]; g = row[offset + 1]; b = row[offset + 2]; }
+                }
                 rb += r8; gb += g; bb += b; count++;
             }
         }
+        XDestroyImage(imgPtr);
+
         if (count == 0) return Color.black;
-        float fr = rb / (255f * count);
-        float fg = gb / (255f * count);
-        float fb = bb / (255f * count);
-        return new Color(fr, fg, fb, 1f);
+        return new Color(rb / (255f * count), gb / (255f * count), bb / (255f * count), 1f);
     }
-#endif
 
     void SmoothTowardsTargets(float dt)
     {

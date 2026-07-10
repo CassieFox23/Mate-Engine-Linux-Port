@@ -1,7 +1,9 @@
-﻿using UnityEngine;
+﻿using System;
+using UnityEngine;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using Random = UnityEngine.Random;
 
 public class PetVoiceReactionHandler : MonoBehaviour
 {
@@ -404,41 +406,38 @@ public class PetVoiceReactionHandler : MonoBehaviour
         }
     }
 
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
-    [StructLayout(LayoutKind.Sequential)]
-    struct POINT { public int X; public int Y; }
-    [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT lpPoint);
-    [DllImport("user32.dll")] static extern System.IntPtr WindowFromPoint(POINT point);
-    [DllImport("user32.dll")] static extern System.IntPtr GetAncestor(System.IntPtr hWnd, uint gaFlags);
-    [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)] static extern System.IntPtr FindWindow(string lpClassName, string lpWindowName);
-    [DllImport("user32.dll")] static extern System.IntPtr GetActiveWindow();
-    const uint GA_ROOT = 2;
-#endif
-
     void ResolveWindowHandle()
     {
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
         if (_hwndCached) return;
-        _unityHwnd = GetActiveWindow();
-        if (_unityHwnd == System.IntPtr.Zero)
-            _unityHwnd = FindWindow("UnityWndClass", Application.productName);
+        _unityHwnd = WindowManager.Instance.UnityWindow;
         _hwndCached = _unityHwnd != System.IntPtr.Zero;
-#endif
     }
 
     bool IsOccludedByOS()
     {
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
         ResolveWindowHandle();
-        if (_unityHwnd == System.IntPtr.Zero) return false;
-        POINT p;
-        if (!GetCursorPos(out p)) return false;
-        var top = GetAncestor(WindowFromPoint(p), GA_ROOT);
-        if (top == System.IntPtr.Zero) return true;
-        return top != _unityHwnd;
-#else
-        return false;
-#endif
+        if (_unityHwnd == IntPtr.Zero) return false;
+        /*
+        Vector2Int p;
+        if (!WindowManager.Instance.GetMousePosition(out p)) return false;
+        var stackingList = WindowManager.Instance.GetClientStackingList();
+    
+        foreach (var win in stackingList)
+        {
+            if (!WindowManager.Instance.GetWindowRect(win, out var rect))
+                continue;
+
+            if (WindowManager.Instance.IsDesktop(win) || WindowManager.Instance.IsDock(win))
+                continue;
+            
+            if (!rect.Contains(p))
+                continue;
+            
+            return win != _unityHwnd;
+        }
+        */
+        // Deprecated as the stacking list order of some X11 WMs is abnormal (Not from top to bottom), resulting in the return value always being false.
+        return true;
     }
 
 #if UNITY_EDITOR
