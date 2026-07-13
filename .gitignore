@@ -166,3 +166,7 @@ Assets/MATE\ ENGINE\ -\ Packages/StandaloneFileBrowser/Plugins/Linux/x86_64.meta
 Assets/MATE\ ENGINE\ -\ Packages/StandaloneFileBrowser/Plugins/Linux/x86_64.meta
 
 _build
+
+# Cassie's fork: portable release binary extracted here for run-in-place (Phase 0)
+/Payload/
+/_run/

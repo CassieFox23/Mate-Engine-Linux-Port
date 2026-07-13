@@ -1,3 +1,13 @@
+> **Cassie's fork** — personal, own-direction build of
+> [Marksonthegamer/Mate-Engine-Linux-Port](https://github.com/Marksonthegamer/Mate-Engine-Linux-Port)
+> (itself a Linux port of shinyflvre's MateEngine).
+> Goals: a solid KDE-Wayland run, custom avatars, and wiring the pet's brain to
+> my local LLM gate instead of the bundled model. Roadmap:
+> [docs/superpowers/specs/2026-07-12-mate-engine-fork-roadmap-design.md](docs/superpowers/specs/2026-07-12-mate-engine-fork-roadmap-design.md).
+> Upstream README below, unchanged.
+
+---
+
 # 🌐 Language / 语言选择
 - [English](#English)
 - [简体中文](#简体中文)
