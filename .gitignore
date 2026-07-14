@@ -170,3 +170,5 @@ _build
 # Cassie's fork: portable release binary extracted here for run-in-place (Phase 0)
 /Payload/
 /_run/
+# Downloaded upstream release tarball (284 MB) — keep OUT of git
+/MateEngineX_release.tar.gz
