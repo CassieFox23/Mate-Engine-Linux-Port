@@ -48,7 +48,7 @@ them.
 
 ## Phases
 
-### Phase 0 — Run on KDE Wayland (portable, no build)
+### Phase 0 — Run on KDE Wayland (portable, no build) — ✅ DONE (2026-07-14)
 
 - Download upstream release `X3.2.0_5` tarball → extract to a **gitignored**
   `Payload/` in the repo (install.sh already references `./Payload`; gitignore
@@ -63,19 +63,39 @@ them.
 - **Done when:** transparent floating VRM shows on the KDE Wayland desktop, no
   black box, drag/interactions work, survives relaunch.
 
-### Phase A — Custom avatars (no build)
+**Outcome:** shipped. `launch.sh` now forces XWayland on **any** Wayland session
+(`960500c`); the KDE-Wayland pet renders **transparent** (shadow on desktop, no
+black box), drags, stays on top, survives relaunch — the launch.sh env fix alone
+was sufficient, so the kdotool / ARGB-visual investigation was **not needed**.
+Added: `run-local.sh` portable runner (`6f3f984`), tarball gitignore fix
+(`d231c23`), and an external `.desktop` launcher (KDE menu icon + `~/.config/
+autostart` symlink, routes through the patched launcher — no terminal at login).
+Fork edit `21eb444` disables the app's own in-app "Start with X11" autostart
+button (it wrote a `Terminal=true` duplicate that bypassed the patched launcher)
+— **source-only, takes effect on the Phase 1 rebuild**. Runbook logged to the
+crew ledger (job-0006, job-0007).
+
+### Phase A — Custom avatars (no build) — ⏭ NEXT
 
 - Runtime `.vrm` import via the in-app file browser (StandaloneFileBrowser).
   Load a custom model; confirm it persists across relaunch.
+- No Unity build needed — runs against the current prebuilt `Payload/` binary,
+  so it's the natural next quick win after Phase 0.
+- Open sub-questions to answer when starting: where the in-app "load avatar"
+  control lives; where imported VRMs are stored / how persistence is keyed;
+  whether a source `.vrm` needs conversion; where Cassie sources/authors an
+  avatar.
 - **Done when:** Cassie's own avatar loads on launch.
 
-### Phase 1 — Source-build toolchain
+### Phase 1 — Source-build toolchain — ⏳ PENDING
 
 - Install Unity Hub + Editor `6000.2.6f2`; open the project; resolve packages;
   `build.sh <output>` → own `MateEngineX.x86_64` (invokes `CliBuilder.Build`).
+- First rebuild is also what makes the committed fork edit (`21eb444`,
+  in-app autostart button hidden) actually take effect + compile-verify.
 - **Done when:** a locally built binary runs and matches release behavior.
 
-### Phase 2 — Brain → local LLM gate (own deep brainstorm before building)
+### Phase 2 — Brain → local LLM gate (own deep brainstorm before building) — ⏳ PENDING
 
 - Disable / remove the `ollama-unity` path and any Meta-Llama gguf (cave-law
   deny). Keep the llama.cpp path optional/legal only if it runs a Qwen/DeepSeek
@@ -108,4 +128,8 @@ rebuild.
 
 ## Next step
 
-Hand **Phase 0** to the writing-plans skill for a detailed implementation plan.
+Phase 0 shipped (2026-07-14). **Next: Phase A — custom avatars.** Start with a
+`superpowers:brainstorming` pass (answer the open sub-questions above by reading
+the in-app file-browser / VRM-load path), then `writing-plans` for the detailed
+implementation plan. Phase A needs **no** Unity build — it runs against the
+current prebuilt `Payload/`.
